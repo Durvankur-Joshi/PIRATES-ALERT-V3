@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Featured Deals with Duplicates</title>
+</head>
+<body>
+    <div class="product-stream">
+        <div class="deal-card" data-id="DEAL-001">
+            <img src="/img/air-fryer.jpg" alt="Digital Air Fryer 5.5L">
+            <h3><a href="/deals/digital-air-fryer-55l">Digital Air Fryer 5.5L</a></h3>
+            <span class="price">₹5,499</span>
+        </div>
+        <div class="deal-card" data-id="DEAL-002">
+            <img src="/img/blender.jpg" alt="High Speed Nutrient Blender">
+            <h3><a href="/deals/high-speed-nutrient-blender">High Speed Nutrient Blender</a></h3>
+            <span class="price">₹3,299</span>
+        </div>
+        <!-- Duplicate of DEAL-001 with identical URL -->
+        <div class="deal-card" data-id="DEAL-001">
+            <img src="/img/air-fryer.jpg" alt="Digital Air Fryer 5.5L">
+            <h3><a href="/deals/digital-air-fryer-55l">Digital Air Fryer 5.5L</a></h3>
+            <span class="price">₹5,499</span>
+        </div>
+        <div class="deal-card" data-id="DEAL-003">
+            <img src="/img/toaster.jpg" alt="4-Slice Stainless Steel Toaster">
+            <h3><a href="/deals/4-slice-stainless-toaster">4-Slice Stainless Steel Toaster</a></h3>
+            <span class="price">₹2,199</span>
+        </div>
+    </div>
+</body>
+</html>

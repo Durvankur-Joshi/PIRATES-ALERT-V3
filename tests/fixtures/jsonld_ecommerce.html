@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JSON-LD Products Catalog</title>
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": 1,
+                "item": {
+                    "@type": "Product",
+                    "name": "Sony WH-1000XM5 Noise-Canceling Headphones",
+                    "sku": "SONY-XM5-BLK",
+                    "url": "https://example.com/products/sony-wh-1000xm5",
+                    "image": "https://example.com/images/sony-xm5.jpg",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": 29990.00,
+                        "highPrice": 34990.00,
+                        "priceCurrency": "INR",
+                        "availability": "https://schema.org/InStock"
+                    },
+                    "aggregateRating": {
+                        "@type": "AggregateRating",
+                        "ratingValue": 4.6,
+                        "reviewCount": 4510
+                    }
+                }
+            },
+            {
+                "@type": "ListItem",
+                "position": 2,
+                "item": {
+                    "@type": "Product",
+                    "name": "Bose QuietComfort 45 Bluetooth Headphones",
+                    "sku": "BOSE-QC45-SLV",
+                    "url": "https://example.com/products/bose-qc45",
+                    "image": "https://example.com/images/bose-qc45.jpg",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": 24900.00,
+                        "highPrice": 29900.00,
+                        "priceCurrency": "INR",
+                        "availability": "https://schema.org/InStock"
+                    },
+                    "aggregateRating": {
+                        "@type": "AggregateRating",
+                        "ratingValue": 4.5,
+                        "reviewCount": 2180
+                    }
+                }
+            }
+        ]
+    }
+    </script>
+</head>
+<body>
+    <h1>Audio Electronics</h1>
+</body>
+</html>

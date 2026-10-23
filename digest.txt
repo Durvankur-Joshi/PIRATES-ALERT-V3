@@ -1,0 +1,3006 @@
+Directory structure:
+└── PIRATES ALERT V3/
+    ├── README.md
+    ├── requirements.txt
+    ├── .env.example
+    ├── app/
+    │   ├── __init__.py
+    │   ├── config.py
+    │   ├── main.py
+    │   ├── api/
+    │   │   ├── __init__.py
+    │   │   └── schemas.py
+    │   ├── browser/
+    │   │   ├── __init__.py
+    │   │   ├── page_loader.py
+    │   │   └── playwright_manager.py
+    │   ├── discovery/
+    │   │   ├── __init__.py
+    │   │   ├── candidate_detector.py
+    │   │   ├── page_classifier.py
+    │   │   └── structured_data.py
+    │   ├── extraction/
+    │   │   ├── __init__.py
+    │   │   ├── engine.py
+    │   │   ├── normalizer.py
+    │   │   └── validator.py
+    │   └── security/
+    │       ├── __init__.py
+    │       └── url_validation.py
+    └── tests/
+        ├── __init__.py
+        ├── test_api.py
+        ├── test_browser_integration.py
+        ├── test_candidate_detection.py
+        ├── test_extraction.py
+        ├── test_url_validation.py
+        └── fixtures/
+            ├── directory_entries.html
+            ├── duplicate_records.html
+            ├── ecommerce_products.html
+            ├── generic_jobs.html
+            ├── jsonld_ecommerce.html
+            ├── malformed_markup.html
+            ├── no_images_listing.html
+            ├── no_listings_page.html
+            ├── no_prices_listing.html
+            └── repeated_with_nav_footer.html
+
+================================================
+FILE: README.md
+================================================
+# PIRATES ALERT V3 â€” Phase 1 Backend
+
+PIRATES ALERT V3 is a deterministic e-commerce and generic listing extraction backend built with Python 3.11, FastAPI, and Playwright Chromium. It discovers repeated listing records, extracts grounded fields (titles, URLs, prices, ratings, reviews, extra attributes), normalizes data, validates integrity, and enforces strict SSRF security controls without depending on LLMs or external AI services.
+
+---
+
+## Architecture Overview
+
+```
+app/
+â”œâ”€â”€ api/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â””â”€â”€ schemas.py              # Pydantic models (camelCase JSON API serialization)
+â”œâ”€â”€ browser/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â”œâ”€â”€ page_loader.py          # Isolated context navigation, bot challenge detection, SSRF route interception
+â”‚   â””â”€â”€ playwright_manager.py   # Async Chromium lifecycle and health management
+â”œâ”€â”€ discovery/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â”œâ”€â”€ candidate_detector.py   # Heuristic DOM cluster discovery for repeating card structures
+â”‚   â”œâ”€â”€ page_classifier.py      # Content-based classification (ecommerce vs. generic_listing)
+â”‚   â””â”€â”€ structured_data.py      # Schema.org JSON-LD extractor (ItemList, Product, JobPosting, etc.)
+â”œâ”€â”€ extraction/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â”œâ”€â”€ engine.py               # Pipeline orchestrating structured data & DOM heuristics
+â”‚   â”œâ”€â”€ normalizer.py           # Numeric price parsing, currency, rating, URL resolution, deduplication
+â”‚   â””â”€â”€ validator.py            # Record sanitization, boilerplate filtering, success/failure status
+â”œâ”€â”€ security/
+â”‚   â”œâ”€â”€ __init__.py
+â”‚   â””â”€â”€ url_validation.py       # SSRF protection, IP/DNS filtering, redirect guard
+â”œâ”€â”€ config.py                   # Pydantic settings management
+â””â”€â”€ main.py                     # FastAPI application routes (/health, /api/v1/extract, /)
+```
+
+### Extraction Pipeline Strategy
+
+1. **URL Security Validation**: Before any browser action, the URL is parsed, scheme-checked (only HTTP/HTTPS), evaluated against restricted IP blocks (loopback, private subnets, link-local, AWS metadata, multicast, carrier-grade NAT, IPv4-mapped IPv6), and resolved via DNS to reject forbidden destinations.
+2. **Browser Loading**: Chromium opens the page in an isolated browser context per request with a configurable modern user agent and strict navigation timeouts. Network requests and redirects are intercepted and revalidated to prevent SSRF via HTTP 3xx redirects.
+3. **Anti-Bot & Screen Checks**: The loader inspects page title and contents for Cloudflare, CAPTCHAs, or access-denied pages. If detected, an HTTP 403 error is raised rather than pretending extraction succeeded.
+4. **Structured Data First**: The engine parses `<script type="application/ld+json">` for standard Schema.org structures (`Product`, `Offer`, `ItemList`, `JobPosting`, `RealEstateListing`).
+5. **Heuristic DOM Discovery**: If structured data is absent or insufficient, the engine analyzes DOM clusters, filters out navigational/footer/sidebar noise, evaluates repeating card structures by link and heading density, and extracts grounded fields.
+6. **Normalization & Deduplication**: Cleans URLs against the source base URL, parses prices and currencies with evidence guards (distinguishing prices from discounts, ratings, or phone numbers), and deduplicates records by canonical URL or product identifier.
+7. **Strict Validation**: Dropping invalid or boilerplate records (e.g. "Privacy Policy", "Terms of Use"). If zero credible records pass, the API returns an explicit failed status with diagnostic warnings.
+
+---
+
+## Setup & Run Instructions (Windows PowerShell)
+
+### 1. Prerequisites
+- Windows 10/11
+- Python 3.11 installed
+
+### 2. Create and Activate Virtual Environment
+```powershell
+# Navigate to project directory
+Set-Location "E:\PIRATES ALERT V3"
+
+# Create Python 3.11 virtual environment
+py -3.11 -m venv .venv
+
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1
+```
+
+### 3. Install Dependencies
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 4. Install Playwright Chromium
+```powershell
+playwright install chromium
+```
+
+### 5. Run the Server
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+API Documentation will be available at:
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
+### 6. Run the Test Suite
+```powershell
+pytest -v
+```
+
+---
+
+## API Specification
+
+### `GET /`
+Returns service metadata and available endpoint documentation.
+
+### `GET /health`
+Returns service health status and Playwright browser availability.
+```json
+{
+  "status": "healthy",
+  "playwrightAvailable": true,
+  "timestamp": "2026-10-23T11:00:00Z"
+}
+```
+
+### `POST /api/v1/extract`
+Accepts a listing URL and optional `pageType` (`auto`, `ecommerce`, `generic_listing`).
+Default is `auto`.
+
+#### Example Request:
+```json
+{
+  "url": "https://example.com/products",
+  "pageType": "auto"
+}
+```
+
+#### Example Response:
+```json
+{
+  "sourceUrl": "https://example.com/products",
+  "pageType": "ecommerce",
+  "success": true,
+  "records": [
+    {
+      "title": "Galaxy Ultra Smartphone 256GB",
+      "url": "https://example.com/items/galaxy-ultra-256gb?pid=PROD-101",
+      "productId": "PROD-101",
+      "imageUrl": "https://example.com/images/phone-a.jpg",
+      "sellingPrice": 69999.0,
+      "mrp": 79999.0,
+      "currency": "INR",
+      "rating": 4.5,
+      "reviewCount": 1240,
+      "extra": {}
+    }
+  ],
+  "metadata": {
+    "recordCount": 1,
+    "extractionMethod": "heuristic_dom",
+    "validationStatus": "passed",
+    "warnings": []
+  }
+}
+```
+
+---
+
+## Security Assumptions & Limitations
+
+- **Prototype Scope**: This backend is designed as an internal prototype. It must not be deployed to a public network without hardened infrastructure-level network egress filtering, rate limiting, and authenticated access.
+- **SSRF Hardening**:
+  - Only HTTP and HTTPS schemes are allowed.
+  - Localhost, `127.0.0.0/8`, private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local/cloud metadata (`169.254.0.0/16`), Carrier-Grade NAT (`100.64.0.0/10`), IPv6 loopback/private (`::1`, `fc00::/7`, `fe80::/10`), and IPv4-mapped IPv6 addresses are strictly blocked.
+  - Hostnames are resolved through DNS and checked against forbidden subnets.
+  - Main frame navigations and redirect requests are intercepted via Playwright routing to revalidate destination URLs.
+- **Bot Mitigation Limitations**: The engine does not bypass Cloudflare Turnstile, CAPTCHAs, paywalls, or authentication. If encountered, an explicit HTTP 403 or failure response is returned.
+- **Pagination Scope**: Phase 1 extracts only the rendered initial viewport/DOM. Multi-page pagination and infinite scrolling are deferred to subsequent phases.
+
+---
+
+## Manual Smoke-Test Procedure (Optional)
+
+To manually smoke-test against live public web pages, run the following PowerShell curl/Invoke-RestMethod commands while the server is running on port 8000:
+
+### 1. Test E-Commerce Public Listing
+```powershell
+$body = @{
+    url = "https://books.toscrape.com/catalogue/category/books/travel_2/index.html"
+    pageType = "ecommerce"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/extract" -Method Post -ContentType "application/json" -Body $body
+```
+
+### 2. Test Generic Public Listing (Jobs / Directory)
+```powershell
+$body = @{
+    url = "https://news.ycombinator.com/jobs"
+    pageType = "generic_listing"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/extract" -Method Post -ContentType "application/json" -Body $body
+```
+*(Note: These smoke tests require public internet connectivity and valid target domain responsiveness. They are provided for manual verification and are not required for passing the automated local test suite).*
+
+
+
+================================================
+FILE: requirements.txt
+================================================
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+playwright>=1.42.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0
+python-dotenv>=1.0.1
+
+
+
+================================================
+FILE: .env.example
+================================================
+HOST=127.0.0.1
+PORT=8000
+ENVIRONMENT=development
+LOG_LEVEL=INFO
+
+PLAYWRIGHT_HEADLESS=true
+NAVIGATION_TIMEOUT_MS=30000
+PAGE_LOAD_TIMEOUT_MS=30000
+MAX_REDIRECTS=5
+BROWSER_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36
+SSRF_PROTECTION_ENABLED=true
+
+
+
+================================================
+FILE: app/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/config.py
+================================================
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    host: str = "127.0.0.1"
+    port: int = 8000
+    environment: str = "development"
+    log_level: str = "INFO"
+
+    playwright_headless: bool = True
+    navigation_timeout_ms: int = 30000
+    page_load_timeout_ms: int = 30000
+    max_redirects: int = 5
+    browser_user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
+    ssrf_protection_enabled: bool = True
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+settings = Settings()
+
+
+
+================================================
+FILE: app/main.py
+================================================
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import AsyncGenerator
+from fastapi import FastAPI, HTTPException, status
+from app.api.schemas import (
+    ApiInfoResponse,
+    ExtractionRequest,
+    ExtractionResponse,
+    HealthResponse,
+)
+from app.browser.page_loader import (
+    BotChallengeDetectedError,
+    EmptyPageError,
+    NavigationError,
+    PageLoadTimeoutError,
+    load_rendered_page,
+)
+from app.browser.playwright_manager import playwright_manager
+from app.config import settings
+from app.extraction.engine import run_extraction_pipeline
+from app.security.url_validation import URLValidationError, validate_url
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    try:
+        await playwright_manager.start()
+    except Exception:
+        pass
+    yield
+    await playwright_manager.close()
+
+
+app = FastAPI(
+    title="PIRATES ALERT V3 API",
+    version="0.1.0",
+    description="Deterministic listing extraction service using Playwright and schema discovery",
+    lifespan=lifespan,
+)
+
+
+@app.get("/", response_model=ApiInfoResponse)
+async def root() -> ApiInfoResponse:
+    return ApiInfoResponse(
+        name="PIRATES ALERT V3 API",
+        version="0.1.0",
+        description="Deterministic e-commerce and generic listing extraction backend",
+        endpoints={
+            "GET /health": "Service health check and Playwright readiness status",
+            "POST /api/v1/extract": "Render and extract records from search or listing pages",
+            "GET /": "Service metadata and endpoint overview",
+        },
+    )
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check() -> HealthResponse:
+    is_available = await playwright_manager.is_available()
+    return HealthResponse(
+        status="healthy" if is_available else "degraded",
+        playwrightAvailable=is_available,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@app.post(
+    "/api/v1/extract",
+    response_model=ExtractionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def extract_records(payload: ExtractionRequest) -> ExtractionResponse:
+    target_url = payload.url
+    try:
+        validate_url(target_url)
+    except URLValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"URL validation failed: {e}",
+        )
+
+    try:
+        html, final_url = await load_rendered_page(
+            url=target_url,
+            timeout_ms=settings.navigation_timeout_ms,
+        )
+    except PageLoadTimeoutError as e:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(e),
+        )
+    except BotChallengeDetectedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except EmptyPageError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(e),
+        )
+    except NavigationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(e),
+        )
+
+    result = run_extraction_pipeline(
+        html=html,
+        source_url=final_url,
+        requested_page_type=payload.page_type.value,
+    )
+
+    return ExtractionResponse.model_validate(result)
+
+
+
+================================================
+FILE: app/api/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/api/schemas.py
+================================================
+from enum import Enum
+from typing import Any
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+
+
+class PageTypeRequested(str, Enum):
+    AUTO = "auto"
+    ECOMMERCE = "ecommerce"
+    GENERIC_LISTING = "generic_listing"
+
+
+class ExtractionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    url: str
+    page_type: PageTypeRequested = Field(default=PageTypeRequested.AUTO, alias="pageType")
+
+
+class ExtractedRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    title: str
+    url: str
+    product_id: str | None = Field(default=None, alias="productId")
+    image_url: str | None = Field(default=None, alias="imageUrl")
+    selling_price: float | None = Field(default=None, alias="sellingPrice")
+    mrp: float | None = None
+    currency: str | None = None
+    rating: float | None = None
+    review_count: int | None = Field(default=None, alias="reviewCount")
+    extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExtractionMetadata(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    record_count: int = Field(alias="recordCount")
+    extraction_method: str = Field(alias="extractionMethod")
+    validation_status: str = Field(alias="validationStatus")
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExtractionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    source_url: str = Field(alias="sourceUrl")
+    page_type: str = Field(alias="pageType")
+    success: bool
+    records: list[ExtractedRecord]
+    metadata: ExtractionMetadata
+
+
+class HealthResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    status: str
+    playwright_available: bool = Field(alias="playwrightAvailable")
+    timestamp: str
+
+
+class ApiInfoResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    name: str
+    version: str
+    description: str
+    endpoints: dict[str, str]
+
+
+
+================================================
+FILE: app/browser/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/browser/page_loader.py
+================================================
+import asyncio
+from typing import Optional
+from playwright.async_api import BrowserContext, Page, Route, TimeoutError as PlaywrightTimeoutError
+from app.browser.playwright_manager import playwright_manager
+from app.config import settings
+from app.security.url_validation import URLValidationError, validate_url
+
+BOT_CHALLENGE_TITLE_KEYWORDS = (
+    "just a moment...",
+    "attention required! | cloudflare",
+    "access denied",
+    "robot check",
+    "security check",
+    "shieldsquare captcha",
+)
+
+BOT_CHALLENGE_BODY_SNIPPETS = (
+    "cf-turnstile",
+    "g-recaptcha",
+    "hcaptcha",
+    "challenge-running",
+    "verify you are human",
+    "enable javascript and cookies to continue",
+)
+
+CONSENT_BUTTON_SELECTORS = [
+    "button:has-text('Accept all')",
+    "button:has-text('Accept All')",
+    "button:has-text('Agree')",
+    "button:has-text('Allow all')",
+    "#onetrust-accept-btn-handler",
+]
+
+
+class NavigationError(RuntimeError):
+    pass
+
+
+class PageLoadTimeoutError(NavigationError):
+    pass
+
+
+class BotChallengeDetectedError(NavigationError):
+    pass
+
+
+class EmptyPageError(NavigationError):
+    pass
+
+
+def check_bot_challenges(title: str, content: str) -> None:
+    title_lower = title.lower()
+    for kw in BOT_CHALLENGE_TITLE_KEYWORDS:
+        if kw in title_lower:
+            raise BotChallengeDetectedError(f"Bot protection challenge screen detected: '{title}'")
+
+    content_lower = content[:5000].lower()
+    for snippet in BOT_CHALLENGE_BODY_SNIPPETS:
+        if snippet in content_lower:
+            raise BotChallengeDetectedError("Bot protection challenge element detected in page")
+
+
+async def attempt_dismiss_consent(page: Page) -> None:
+    for selector in CONSENT_BUTTON_SELECTORS:
+        try:
+            button = page.locator(selector).first
+            if await button.is_visible(timeout=500):
+                await button.click(timeout=1000)
+                break
+        except Exception:
+            continue
+
+
+async def route_interceptor(route: Route) -> None:
+    request = route.request
+    if request.is_navigation_request():
+        try:
+            # Security requirement: Revalidate destination URL on redirects and navigations to prevent SSRF
+            validate_url(request.url)
+            await route.continue_()
+        except URLValidationError:
+            await route.abort("blockedbyclient")
+            return
+    else:
+        await route.continue_()
+
+
+async def load_rendered_page(
+    url: str,
+    timeout_ms: Optional[int] = None,
+) -> tuple[str, str]:
+    validated_url = validate_url(url)
+    effective_timeout = timeout_ms or settings.navigation_timeout_ms
+
+    browser = await playwright_manager.get_browser()
+    context: BrowserContext = await browser.new_context(
+        user_agent=settings.browser_user_agent,
+        viewport={"width": 1280, "height": 800},
+        ignore_https_errors=False,
+    )
+
+    page: Page = await context.new_page()
+
+    try:
+        await page.route("**/*", route_interceptor)
+
+        try:
+            response = await page.goto(
+                validated_url,
+                wait_until="domcontentloaded",
+                timeout=effective_timeout,
+            )
+        except PlaywrightTimeoutError as e:
+            raise PageLoadTimeoutError(f"Navigation timed out after {effective_timeout}ms") from e
+        except Exception as e:
+            raise NavigationError(f"Failed to load URL {validated_url}: {e}") from e
+
+        if response is None:
+            raise NavigationError(f"Empty HTTP response received for {validated_url}")
+
+        final_url = page.url
+        try:
+            validate_url(final_url)
+        except URLValidationError as e:
+            raise NavigationError(f"Final redirection target failed security validation: {e}") from e
+
+        try:
+            await page.wait_for_load_state("networkidle", timeout=3000)
+        except PlaywrightTimeoutError:
+            pass
+
+        await attempt_dismiss_consent(page)
+
+        page_title = await page.title()
+        rendered_html = await page.content()
+
+        if not rendered_html or len(rendered_html.strip()) < 100:
+            raise EmptyPageError(f"Page at {final_url} returned empty or insufficient content")
+
+        check_bot_challenges(page_title, rendered_html)
+
+        return rendered_html, final_url
+
+    finally:
+        await page.close()
+        await context.close()
+
+
+
+================================================
+FILE: app/browser/playwright_manager.py
+================================================
+import asyncio
+from typing import Optional
+from playwright.async_api import Browser, Playwright, async_playwright
+from app.config import settings
+
+
+class PlaywrightManager:
+    def __init__(self) -> None:
+        self._playwright: Optional[Playwright] = None
+        self._browser: Optional[Browser] = None
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        async with self._lock:
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
+            if self._browser is None or not self._browser.is_connected():
+                self._browser = await self._playwright.chromium.launch(
+                    headless=settings.playwright_headless
+                )
+
+    async def get_browser(self) -> Browser:
+        if self._browser is None or not self._browser.is_connected():
+            await self.start()
+        if self._browser is None:
+            raise RuntimeError("Failed to initialize Playwright browser")
+        return self._browser
+
+    async def is_available(self) -> bool:
+        try:
+            browser = await self.get_browser()
+            return browser.is_connected()
+        except Exception:
+            return False
+
+    async def close(self) -> None:
+        async with self._lock:
+            if self._browser:
+                try:
+                    await self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+            if self._playwright:
+                try:
+                    await self._playwright.stop()
+                except Exception:
+                    pass
+                self._playwright = None
+
+
+playwright_manager = PlaywrightManager()
+
+
+
+================================================
+FILE: app/discovery/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/discovery/candidate_detector.py
+================================================
+import re
+from typing import Any
+from bs4 import BeautifulSoup, Tag
+from app.extraction.normalizer import (
+    clean_text,
+    extract_price_and_currency,
+    normalize_url,
+    parse_rating,
+    parse_review_count,
+)
+from app.extraction.validator import is_boilerplate_title
+
+DISCARDED_TAGS = {"nav", "footer", "header", "aside", "noscript", "style", "script"}
+DISCARDED_CLASS_ID_PATTERNS = [
+    re.compile(r"\b(?:nav|navigation|menu|footer|header|sidebar|breadcrumb|pagination|banner|promo|advertisement|cookie|modal)\b", re.IGNORECASE)
+]
+
+STRIKE_THROUGH_TAGS = {"del", "s", "strike"}
+
+
+def is_discarded_container(element: Tag) -> bool:
+    if element.name in DISCARDED_TAGS:
+        return True
+
+    class_list = element.get("class", [])
+    classes = " ".join(class_list) if isinstance(class_list, list) else str(class_list)
+    element_id = str(element.get("id", ""))
+    role = str(element.get("role", "")).lower()
+
+    if role in ("navigation", "banner", "contentinfo"):
+        return True
+
+    for pat in DISCARDED_CLASS_ID_PATTERNS:
+        if pat.search(classes) or pat.search(element_id):
+            return True
+
+    return False
+
+
+def remove_noise_containers(soup: BeautifulSoup) -> None:
+    for tag in soup.find_all(list(DISCARDED_TAGS)):
+        tag.decompose()
+
+    for element in soup.find_all(True):
+        if element.parent and is_discarded_container(element):
+            element.decompose()
+
+
+def extract_image_from_card(card: Tag, base_url: str) -> str | None:
+    for img in card.find_all("img"):
+        src = (
+            img.get("data-src")
+            or img.get("data-original")
+            or img.get("data-lazy-src")
+            or img.get("src")
+        )
+        if src and not src.startswith("data:"):
+            normalized = normalize_url(base_url, src)
+            if normalized:
+                return normalized
+
+        srcset = img.get("srcset")
+        if srcset:
+            parts = [p.strip().split(" ")[0] for p in srcset.split(",") if p.strip()]
+            if parts:
+                normalized = normalize_url(base_url, parts[-1])
+                if normalized:
+                    return normalized
+
+    return None
+
+
+def extract_title_and_url_from_card(card: Tag, base_url: str) -> tuple[str, str | None]:
+    for heading_tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        for heading in card.find_all(heading_tag):
+            text = clean_text(heading.get_text())
+            if text and not is_boilerplate_title(text):
+                anchor = heading.find("a") or heading.find_parent("a")
+                link = normalize_url(base_url, anchor.get("href")) if anchor and anchor.get("href") else None
+                if not link:
+                    first_link = card.find("a", href=True)
+                    link = normalize_url(base_url, first_link.get("href")) if first_link else None
+                return text, link
+
+    anchors = card.find_all("a", href=True)
+    best_text = ""
+    best_link: str | None = None
+
+    for a in anchors:
+        text = clean_text(a.get_text())
+        if not text:
+            img = a.find("img")
+            if img:
+                text = clean_text(img.get("alt") or img.get("title"))
+
+        if text and not is_boilerplate_title(text) and len(text) > len(best_text):
+            best_text = text
+            best_link = normalize_url(base_url, a.get("href"))
+
+    if best_text and best_link:
+        return best_text, best_link
+
+    first_link = card.find("a", href=True)
+    fallback_link = normalize_url(base_url, first_link.get("href")) if first_link else None
+    return best_text, fallback_link
+
+
+def extract_product_id(card: Tag, url: str | None) -> str | None:
+    for attr in ("data-product-id", "data-pid", "data-sku", "data-id", "data-item-id"):
+        val = card.get(attr)
+        if val:
+            return str(val)
+
+    if url:
+        match_id = re.search(r"[?&](?:pid|productId|id|sku)=([^&#]+)", url)
+        if match_id:
+            return match_id.group(1)
+
+        match_dp = re.search(r"/(?:dp|product|p|item)/([A-Za-z0-9_-]+)", url)
+        if match_dp:
+            return match_dp.group(1)
+
+    return None
+
+
+def extract_card_prices(card: Tag) -> tuple[float | None, float | None, str | None]:
+    strike_price: float | None = None
+    regular_prices: list[tuple[float, str | None]] = []
+
+    for strike_elem in card.find_all(list(STRIKE_THROUGH_TAGS)):
+        text = strike_elem.get_text()
+        p, _ = extract_price_and_currency(text)
+        if p is not None:
+            strike_price = p
+            break
+
+    price_elements = card.find_all(
+        lambda t: t.name in ("span", "div", "p", "b", "strong")
+        and any(k in " ".join(t.get("class", [])) for k in ("price", "cost", "offer", "mrp", "regular", "amount", "rate"))
+    )
+
+    if not price_elements:
+        price_elements = card.find_all(["span", "div", "p", "b", "strong"])
+
+    for el in price_elements:
+        if el.name in STRIKE_THROUGH_TAGS or el.find_parent(list(STRIKE_THROUGH_TAGS)):
+            continue
+        text = el.get_text()
+        price, curr = extract_price_and_currency(text)
+        if price is not None:
+            regular_prices.append((price, curr))
+
+    if not regular_prices:
+        return None, strike_price, None
+
+    currency = next((c for _, c in regular_prices if c is not None), None)
+
+    if strike_price is not None:
+        selling_candidate = min(p for p, _ in regular_prices)
+        if selling_candidate < strike_price:
+            return selling_candidate, strike_price, currency
+        return selling_candidate, None, currency
+
+    if len(regular_prices) >= 2:
+        sorted_prices = sorted(p for p, _ in regular_prices)
+        if sorted_prices[0] < sorted_prices[-1]:
+            return sorted_prices[0], sorted_prices[-1], currency
+        return sorted_prices[0], None, currency
+
+    return regular_prices[0][0], None, currency
+
+
+def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None]:
+    rating: float | None = None
+    reviews: int | None = None
+
+    for el in card.find_all(["span", "div", "p", "div"]):
+        classes = " ".join(el.get("class", []))
+        text = el.get_text()
+        if not rating and ("rating" in classes or "star" in classes or "â˜…" in text):
+            rating = parse_rating(text)
+        if not reviews and ("review" in classes or "count" in classes or "(" in text):
+            reviews = parse_review_count(text)
+
+    if not rating:
+        rating = parse_rating(card.get_text())
+    if not reviews:
+        reviews = parse_review_count(card.get_text())
+
+    return rating, reviews
+
+
+def extract_card_extra(card: Tag, page_type: str) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+
+    if page_type == "generic_listing":
+        for el in card.find_all(["span", "div", "p"]):
+            classes = " ".join(el.get("class", []))
+            text = clean_text(el.get_text())
+            if not text or len(text) > 80:
+                continue
+
+            if "company" in classes or "employer" in classes or "author" in classes:
+                if "company" not in extra:
+                    extra["company"] = text
+            elif "location" in classes or "city" in classes or "address" in classes:
+                if "location" not in extra:
+                    extra["location"] = text
+            elif "category" in classes or "badge" in classes or "tag" in classes:
+                if "category" not in extra:
+                    extra["category"] = text
+
+    return extra
+
+
+def parse_candidate_card(card: Tag, base_url: str, page_type: str) -> dict[str, Any] | None:
+    title, url = extract_title_and_url_from_card(card, base_url)
+    if not title or not url:
+        return None
+
+    product_id = extract_product_id(card, url)
+    image_url = extract_image_from_card(card, base_url)
+    selling_price, mrp, currency = extract_card_prices(card)
+    rating, review_count = extract_card_rating_and_reviews(card)
+    extra = extract_card_extra(card, page_type)
+
+    return {
+        "title": title,
+        "url": url,
+        "productId": product_id,
+        "imageUrl": image_url,
+        "sellingPrice": selling_price,
+        "mrp": mrp,
+        "currency": currency,
+        "rating": rating,
+        "reviewCount": review_count,
+        "extra": extra,
+    }
+
+
+def find_candidate_clusters(soup: BeautifulSoup) -> list[list[Tag]]:
+    clusters: list[list[Tag]] = []
+
+    for parent in soup.find_all(["ul", "ol", "div", "section", "main"]):
+        children = [c for c in parent.find_all(recursive=False) if isinstance(c, Tag)]
+        if len(children) < 2:
+            continue
+
+        groups: dict[str, list[Tag]] = {}
+        for child in children:
+            class_str = ".".join(sorted(child.get("class", [])))
+            key = f"{child.name}:{class_str}"
+            groups.setdefault(key, []).append(child)
+
+        for group in groups.values():
+            if len(group) >= 2:
+                clusters.append(group)
+
+    return clusters
+
+
+def score_cluster(cluster: list[Tag]) -> float:
+    if len(cluster) < 2:
+        return 0.0
+
+    links_count = 0
+    text_lengths: list[int] = []
+    headings_count = 0
+
+    for item in cluster:
+        if item.find("a", href=True):
+            links_count += 1
+        text = clean_text(item.get_text())
+        text_lengths.append(len(text))
+        if item.find(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            headings_count += 1
+
+    avg_text_length = sum(text_lengths) / len(text_lengths) if text_lengths else 0
+    if avg_text_length < 8:
+        return 0.0
+
+    link_ratio = links_count / len(cluster)
+    score = (link_ratio * 40.0) + (min(len(cluster), 50) * 1.5) + (headings_count * 2.0)
+    return score
+
+
+def detect_candidate_records(html: str, base_url: str, page_type: str) -> list[dict[str, Any]]:
+    soup = BeautifulSoup(html, "html.parser")
+    remove_noise_containers(soup)
+
+    clusters = find_candidate_clusters(soup)
+    if not clusters:
+        return []
+
+    clusters.sort(key=score_cluster, reverse=True)
+
+    records: list[dict[str, Any]] = []
+    for best_cluster in clusters:
+        if score_cluster(best_cluster) <= 10.0:
+            continue
+
+        cluster_records: list[dict[str, Any]] = []
+        for card in best_cluster:
+            parsed = parse_candidate_card(card, base_url, page_type)
+            if parsed:
+                cluster_records.append(parsed)
+
+        if len(cluster_records) >= 2:
+            records = cluster_records
+            break
+
+    return records
+
+
+
+================================================
+FILE: app/discovery/page_classifier.py
+================================================
+import re
+from bs4 import BeautifulSoup
+
+ECOMMERCE_PATTERNS = [
+    re.compile(r"(?:â‚¹|\$|â‚¬|Â£|rs\.?|inr|usd)\s*[0-9,]+(?:\.[0-9]{2})?", re.IGNORECASE),
+    re.compile(r"\b(?:add to cart|buy now|in stock|out of stock|free shipping|mrp|discount)\b", re.IGNORECASE),
+]
+
+GENERIC_PATTERNS = [
+    re.compile(r"\b(?:apply now|job description|employment type|full-time|part-time|remote|salary|hiring|qualifications)\b", re.IGNORECASE),
+    re.compile(r"\b(?:sq\s*ft|bhk|bedrooms?|bathrooms?|for rent|property type|real estate)\b", re.IGNORECASE),
+    re.compile(r"\b(?:directory|profile|opening hours|business address|contact details)\b", re.IGNORECASE),
+]
+
+
+def score_text_signals(text: str, patterns: list[re.Pattern]) -> int:
+    score = 0
+    for pat in patterns:
+        matches = pat.findall(text)
+        score += len(matches)
+    return score
+
+
+def classify_page(html: str, structured_data_type: str | None = None, requested_type: str = "auto") -> str:
+    if requested_type in ("ecommerce", "generic_listing"):
+        return requested_type
+
+    if structured_data_type in ("ecommerce", "generic_listing"):
+        return structured_data_type
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    page_text = soup.get_text(separator=" ")
+
+    ecommerce_score = score_text_signals(page_text, ECOMMERCE_PATTERNS)
+    generic_score = score_text_signals(page_text, GENERIC_PATTERNS)
+
+    if ecommerce_score > 0 and ecommerce_score >= generic_score:
+        return "ecommerce"
+    elif generic_score > 0:
+        return "generic_listing"
+
+    return "generic_listing"
+
+
+
+================================================
+FILE: app/discovery/structured_data.py
+================================================
+import json
+from typing import Any
+from bs4 import BeautifulSoup
+from app.extraction.normalizer import (
+    clean_text,
+    extract_price_and_currency,
+    normalize_url,
+    parse_numeric_price,
+    parse_rating,
+    parse_review_count,
+)
+
+ECOMMERCE_TYPES = {
+    "product",
+    "individualproduct",
+    "productmodel",
+    "productgroup",
+    "offer",
+}
+
+GENERIC_LISTING_TYPES = {
+    "jobposting",
+    "realestatelisting",
+    "singlefamilyresidence",
+    "apartment",
+    "residence",
+    "place",
+    "localbusiness",
+    "organization",
+    "event",
+    "article",
+    "newsarticle",
+}
+
+
+def parse_json_ld_string(content: str) -> list[dict[str, Any]]:
+    clean = content.strip()
+    if not clean:
+        return []
+    try:
+        data = json.loads(clean)
+        if isinstance(data, dict):
+            return [data]
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+    except json.JSONDecodeError:
+        pass
+    return []
+
+
+def collect_schema_nodes(data: Any, out_nodes: list[dict[str, Any]]) -> None:
+    if isinstance(data, dict):
+        if "@type" in data:
+            out_nodes.append(data)
+        for val in data.values():
+            collect_schema_nodes(val, out_nodes)
+    elif isinstance(data, list):
+        for item in data:
+            collect_schema_nodes(item, out_nodes)
+
+
+def extract_image_url(image_field: Any) -> str | None:
+    if isinstance(image_field, str):
+        return image_field.strip() or None
+    if isinstance(image_field, list) and image_field:
+        first = image_field[0]
+        if isinstance(first, str):
+            return first.strip() or None
+        if isinstance(first, dict):
+            return first.get("url")
+    if isinstance(image_field, dict):
+        return image_field.get("url")
+    return None
+
+
+def extract_price_info(offers_field: Any) -> tuple[float | None, float | None, str | None]:
+    if not offers_field:
+        return None, None, None
+
+    offer = offers_field[0] if isinstance(offers_field, list) and offers_field else offers_field
+    if not isinstance(offer, dict):
+        return None, None, None
+
+    raw_price = offer.get("price") or offer.get("lowPrice")
+    raw_mrp = offer.get("highPrice") or offer.get("listPrice")
+    currency = offer.get("priceCurrency")
+
+    selling_price: float | None = None
+    if raw_price is not None:
+        if isinstance(raw_price, (int, float)):
+            selling_price = float(raw_price)
+        elif isinstance(raw_price, str):
+            selling_price, parsed_cur = extract_price_and_currency(raw_price)
+            if not currency and parsed_cur:
+                currency = parsed_cur
+
+    mrp: float | None = None
+    if raw_mrp is not None:
+        if isinstance(raw_mrp, (int, float)):
+            mrp = float(raw_mrp)
+        elif isinstance(raw_mrp, str):
+            mrp, _ = extract_price_and_currency(raw_mrp)
+
+    return selling_price, mrp, currency
+
+
+def extract_rating_info(agg_rating: Any) -> tuple[float | None, int | None]:
+    if not isinstance(agg_rating, dict):
+        return None, None
+
+    raw_val = agg_rating.get("ratingValue")
+    raw_count = agg_rating.get("reviewCount") or agg_rating.get("ratingCount")
+
+    rating: float | None = None
+    if raw_val is not None:
+        if isinstance(raw_val, (int, float)):
+            rating = float(raw_val)
+        elif isinstance(raw_val, str):
+            rating = parse_rating(raw_val)
+
+    review_count: int | None = None
+    if raw_count is not None:
+        if isinstance(raw_count, int):
+            review_count = raw_count
+        elif isinstance(raw_count, str):
+            review_count = parse_review_count(raw_count)
+
+    return rating, review_count
+
+
+def extract_extra_attributes(node: dict[str, Any], node_type: str) -> dict[str, Any]:
+    extra: dict[str, Any] = {}
+
+    if "brand" in node:
+        brand = node["brand"]
+        extra["brand"] = brand.get("name") if isinstance(brand, dict) else str(brand)
+
+    if "category" in node:
+        extra["category"] = str(node["category"])
+
+    if node_type == "jobposting":
+        if "hiringOrganization" in node:
+            org = node["hiringOrganization"]
+            extra["company"] = org.get("name") if isinstance(org, dict) else str(org)
+        if "jobLocation" in node:
+            loc = node["jobLocation"]
+            if isinstance(loc, dict):
+                address = loc.get("address", {})
+                if isinstance(address, dict):
+                    extra["location"] = address.get("addressLocality") or address.get("streetAddress")
+                else:
+                    extra["location"] = str(address)
+            else:
+                extra["location"] = str(loc)
+        if "employmentType" in node:
+            extra["employmentType"] = node["employmentType"]
+
+    elif node_type in ("realestatelisting", "singlefamilyresidence", "apartment"):
+        if "numberOfRooms" in node:
+            extra["rooms"] = node["numberOfRooms"]
+        if "floorSize" in node:
+            extra["floorSize"] = str(node["floorSize"])
+
+    return extra
+
+
+def parse_schema_node(node: dict[str, Any], base_url: str) -> tuple[dict[str, Any] | None, str | None]:
+    raw_type = node.get("@type")
+    if not raw_type:
+        return None, None
+
+    types = [raw_type.lower()] if isinstance(raw_type, str) else [t.lower() for t in raw_type if isinstance(t, str)]
+    detected_type: str | None = None
+    matched_type = types[0]
+
+    if any(t in ECOMMERCE_TYPES for t in types):
+        detected_type = "ecommerce"
+    elif any(t in GENERIC_LISTING_TYPES for t in types):
+        detected_type = "generic_listing"
+    else:
+        return None, None
+
+    title = clean_text(node.get("name") or node.get("headline") or node.get("title"))
+    if not title:
+        return None, None
+
+    raw_url = node.get("url") or node.get("@id")
+    url = normalize_url(base_url, raw_url) or base_url
+
+    raw_sku = node.get("sku") or node.get("productID") or node.get("identifier") or node.get("gtin13")
+    product_id = str(raw_sku) if raw_sku else None
+
+    raw_img = extract_image_url(node.get("image"))
+    image_url = normalize_url(base_url, raw_img) if raw_img else None
+
+    selling_price, mrp, currency = extract_price_info(node.get("offers"))
+    rating, review_count = extract_rating_info(node.get("aggregateRating"))
+    extra = extract_extra_attributes(node, matched_type)
+
+    record: dict[str, Any] = {
+        "title": title,
+        "url": url,
+        "productId": product_id,
+        "imageUrl": image_url,
+        "sellingPrice": selling_price,
+        "mrp": mrp,
+        "currency": currency,
+        "rating": rating,
+        "reviewCount": review_count,
+        "extra": extra,
+    }
+    return record, detected_type
+
+
+def extract_from_structured_data(html: str, base_url: str) -> tuple[list[dict[str, Any]], str | None]:
+    soup = BeautifulSoup(html, "html.parser")
+    scripts = soup.find_all("script", type=lambda t: t and "ld+json" in t.lower())
+
+    records: list[dict[str, Any]] = []
+    type_votes: list[str] = []
+
+    for script in scripts:
+        if not script.string:
+            continue
+        parsed_objects = parse_json_ld_string(script.string)
+        all_nodes: list[dict[str, Any]] = []
+        for obj in parsed_objects:
+            collect_schema_nodes(obj, all_nodes)
+
+        for node in all_nodes:
+            rec, page_type = parse_schema_node(node, base_url)
+            if rec:
+                records.append(rec)
+                if page_type:
+                    type_votes.append(page_type)
+
+    detected_type: str | None = None
+    if type_votes:
+        ecommerce_count = type_votes.count("ecommerce")
+        generic_count = type_votes.count("generic_listing")
+        detected_type = "ecommerce" if ecommerce_count >= generic_count else "generic_listing"
+
+    return records, detected_type
+
+
+
+================================================
+FILE: app/extraction/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/extraction/engine.py
+================================================
+from typing import Any
+from app.discovery.candidate_detector import detect_candidate_records
+from app.discovery.page_classifier import classify_page
+from app.discovery.structured_data import extract_from_structured_data
+from app.extraction.normalizer import deduplicate_records
+from app.extraction.validator import validate_extracted_records
+
+
+def run_extraction_pipeline(
+    html: str,
+    source_url: str,
+    requested_page_type: str = "auto",
+) -> dict[str, Any]:
+    sd_records, sd_type = extract_from_structured_data(html, source_url)
+    page_type = classify_page(html, structured_data_type=sd_type, requested_type=requested_page_type)
+
+    if sd_records:
+        deduped_sd = deduplicate_records(sd_records)
+        is_valid, val_status, valid_records, val_warnings = validate_extracted_records(deduped_sd, page_type)
+        if is_valid and len(valid_records) > 0:
+            return {
+                "sourceUrl": source_url,
+                "pageType": page_type,
+                "success": True,
+                "records": valid_records,
+                "metadata": {
+                    "recordCount": len(valid_records),
+                    "extractionMethod": "structured_data",
+                    "validationStatus": val_status,
+                    "warnings": val_warnings,
+                },
+            }
+
+    dom_records = detect_candidate_records(html, source_url, page_type)
+    if dom_records:
+        deduped_dom = deduplicate_records(dom_records)
+        is_valid, val_status, valid_records, val_warnings = validate_extracted_records(deduped_dom, page_type)
+        if is_valid and len(valid_records) > 0:
+            return {
+                "sourceUrl": source_url,
+                "pageType": page_type,
+                "success": True,
+                "records": valid_records,
+                "metadata": {
+                    "recordCount": len(valid_records),
+                    "extractionMethod": "heuristic_dom",
+                    "validationStatus": val_status,
+                    "warnings": val_warnings,
+                },
+            }
+
+    return {
+        "sourceUrl": source_url,
+        "pageType": page_type,
+        "success": False,
+        "records": [],
+        "metadata": {
+            "recordCount": 0,
+            "extractionMethod": "none",
+            "validationStatus": "failed",
+            "warnings": ["No credible listing records found on the page"],
+        },
+    }
+
+
+
+================================================
+FILE: app/extraction/normalizer.py
+================================================
+import re
+from typing import Any
+from urllib.parse import urljoin, urlparse, urlunparse
+
+CURRENCY_SYMBOLS: dict[str, str] = {
+    "â‚¹": "INR",
+    "rs.": "INR",
+    "rs": "INR",
+    "inr": "INR",
+    "$": "USD",
+    "usd": "USD",
+    "us$": "USD",
+    "â‚¬": "EUR",
+    "eur": "EUR",
+    "Â£": "GBP",
+    "gbp": "GBP",
+    "Â¥": "JPY",
+    "jpy": "JPY",
+    "cny": "CNY",
+    "cad": "CAD",
+    "c$": "CAD",
+    "aud": "AUD",
+    "a$": "AUD",
+}
+
+DISCOUNT_KEYWORDS = ("off", "discount", "save", "%")
+PHONE_PATTERNS = [
+    re.compile(r"^\+?[0-9]{1,4}?[-.\s]?\(?[0-9]{1,3}?\)?[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4}$"),
+    re.compile(r"^[0-9]{10,12}$"),
+]
+
+
+def clean_text(text: str | None) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r"\s+", " ", text)
+    return cleaned.strip()
+
+
+def normalize_url(base_url: str, link: str | None) -> str | None:
+    if not link:
+        return None
+    trimmed = link.strip()
+    if not trimmed or trimmed.startswith(("javascript:", "mailto:", "tel:", "#")):
+        return None
+
+    full_url = urljoin(base_url, trimmed)
+    parsed = urlparse(full_url)
+    if parsed.scheme not in ("http", "https"):
+        return None
+
+    cleaned_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
+    return cleaned_url
+
+
+def is_likely_phone_number(text: str) -> bool:
+    cleaned = re.sub(r"[\s\-\(\)\.]", "", text)
+    if cleaned.startswith("+"):
+        cleaned = cleaned[1:]
+    if cleaned.isdigit() and len(cleaned) in (10, 11, 12):
+        return True
+    return False
+
+
+def is_discount_string(text: str) -> bool:
+    lower = text.lower()
+    return any(keyword in lower for keyword in DISCOUNT_KEYWORDS)
+
+
+def detect_currency(text: str) -> str | None:
+    lower = text.lower()
+    for symbol, code in CURRENCY_SYMBOLS.items():
+        if symbol in lower:
+            return code
+    return None
+
+
+def parse_numeric_price(price_str: str) -> float | None:
+    clean = re.sub(r"[^\d.,]", "", price_str).strip()
+    if not clean:
+        return None
+
+    if "," in clean and "." in clean:
+        if clean.rfind(",") > clean.rfind("."):
+            clean = clean.replace(".", "").replace(",", ".")
+        else:
+            clean = clean.replace(",", "")
+    elif "," in clean:
+        parts = clean.split(",")
+        if len(parts[-1]) == 2:
+            clean = "".join(parts[:-1]) + "." + parts[-1]
+        else:
+            clean = clean.replace(",", "")
+
+    try:
+        val = float(clean)
+        return val if val > 0 else None
+    except ValueError:
+        return None
+
+
+def extract_price_and_currency(text: str | None) -> tuple[float | None, str | None]:
+    if not text:
+        return None, None
+
+    clean = clean_text(text)
+    if is_likely_phone_number(clean) or is_discount_string(clean):
+        return None, None
+
+    currency = detect_currency(clean)
+
+    price_match = re.search(
+        r"(?:(?:â‚¹|Rs\.?|INR|\$|USD|â‚¬|EUR|Â£|GBP|CAD|AUD)\s*)?([0-9]{1,3}(?:[,\.][0-9]{3})*(?:[,\.][0-9]{2})?|[0-9]+(?:\.[0-9]{2})?)(?:\s*(?:/-|INR|USD|EUR|GBP))?",
+        clean,
+        re.IGNORECASE,
+    )
+
+    if not price_match:
+        return None, currency
+
+    candidate_number = price_match.group(1)
+    if not currency and not any(marker in clean.lower() for marker in ("price", "mrp", "/-", "sale")):
+        return None, None
+
+    price = parse_numeric_price(candidate_number)
+    return price, currency
+
+
+def parse_rating(text: str | None) -> float | None:
+    if not text:
+        return None
+    clean = clean_text(text)
+
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*5", clean, re.IGNORECASE)
+    if match:
+        try:
+            val = float(match.group(1))
+            return val if 0.0 <= val <= 5.0 else None
+        except ValueError:
+            pass
+
+    match_star = re.search(r"(\d+(?:\.\d+)?)\s*(?:â˜…|stars?|star|rating)?", clean, re.IGNORECASE)
+    if match_star:
+        try:
+            val = float(match_star.group(1))
+            if 0.0 <= val <= 5.0:
+                return val
+            if 5.0 < val <= 10.0:
+                return round(val / 2.0, 1)
+        except ValueError:
+            pass
+
+    return None
+
+
+def parse_review_count(text: str | None) -> int | None:
+    if not text:
+        return None
+    clean = clean_text(text)
+
+    k_match = re.search(r"(\d+(?:\.\d+)?)\s*k\s*(?:reviews?|ratings?|votes?)?", clean, re.IGNORECASE)
+    if k_match:
+        try:
+            return int(float(k_match.group(1)) * 1000)
+        except ValueError:
+            pass
+
+    parentheses_match = re.search(r"\(\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s*(?:reviews?|ratings?|votes?)?\s*\)", clean, re.IGNORECASE)
+    if parentheses_match:
+        digits = parentheses_match.group(1).replace(",", "")
+        try:
+            return int(digits)
+        except ValueError:
+            pass
+
+    keyword_match = re.search(r"\b([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s*(?:reviews?|ratings?|votes?)\b", clean, re.IGNORECASE)
+    if keyword_match:
+        digits = keyword_match.group(1).replace(",", "")
+        try:
+            return int(digits)
+        except ValueError:
+            pass
+
+    exact_num = re.fullmatch(r"\(?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\s*\)?", clean)
+    if exact_num:
+        digits = exact_num.group(1).replace(",", "")
+        try:
+            return int(digits)
+        except ValueError:
+            pass
+
+    return None
+
+
+def deduplicate_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen_identifiers: set[str] = set()
+    unique_records: list[dict[str, Any]] = []
+
+    for item in records:
+        url = item.get("url")
+        product_id = item.get("productId") or item.get("product_id")
+        title = item.get("title", "")
+
+        identifier = url or (f"{product_id}::{title}" if product_id else f"{title}")
+        if not identifier or identifier in seen_identifiers:
+            continue
+
+        seen_identifiers.add(identifier)
+        unique_records.append(item)
+
+    return unique_records
+
+
+
+================================================
+FILE: app/extraction/validator.py
+================================================
+from typing import Any
+from urllib.parse import urlparse
+
+BOILERPLATE_TITLES = {
+    "home",
+    "about",
+    "about us",
+    "contact",
+    "contact us",
+    "privacy policy",
+    "terms of use",
+    "terms of service",
+    "terms & conditions",
+    "sign in",
+    "sign up",
+    "log in",
+    "login",
+    "cart",
+    "checkout",
+    "view cart",
+    "my account",
+    "careers",
+    "help",
+    "help center",
+    "faqs",
+    "faq",
+    "cookie policy",
+    "sitemap",
+    "feedback",
+    "follow us",
+    "next",
+    "previous",
+    "more",
+    "read more",
+    "view all",
+}
+
+
+def is_valid_url_string(url: str | None) -> bool:
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
+def is_boilerplate_title(title: str) -> bool:
+    cleaned = title.strip().lower()
+    if len(cleaned) < 3:
+        return True
+    return cleaned in BOILERPLATE_TITLES
+
+
+def validate_single_record(record: dict[str, Any], page_type: str) -> tuple[bool, str | None]:
+    title = (record.get("title") or "").strip()
+    if not title:
+        return False, "Missing or empty title"
+
+    if is_boilerplate_title(title):
+        return False, f"Title appears to be navigation or boilerplate: '{title}'"
+
+    url = record.get("url")
+    if not is_valid_url_string(url):
+        return False, f"Invalid or missing record URL: '{url}'"
+
+    image_url = record.get("imageUrl") or record.get("image_url")
+    if image_url and not is_valid_url_string(image_url):
+        record["imageUrl"] = None
+        record["image_url"] = None
+
+    selling_price = record.get("sellingPrice") if "sellingPrice" in record else record.get("selling_price")
+    if selling_price is not None and selling_price <= 0:
+        record["sellingPrice"] = None
+        record["selling_price"] = None
+
+    mrp = record.get("mrp")
+    if mrp is not None and mrp <= 0:
+        record["mrp"] = None
+
+    rating = record.get("rating")
+    if rating is not None and not (0.0 <= rating <= 10.0):
+        record["rating"] = None
+
+    review_count = record.get("reviewCount") if "reviewCount" in record else record.get("review_count")
+    if review_count is not None and review_count < 0:
+        record["reviewCount"] = None
+        record["review_count"] = None
+
+    if page_type == "ecommerce":
+        has_price = selling_price is not None
+        has_image = bool(image_url)
+        has_sku = bool(record.get("productId") or record.get("product_id"))
+        if not (has_price or has_image or has_sku):
+            return False, "E-commerce record missing price, image, and product ID"
+
+    return True, None
+
+
+def validate_extracted_records(
+    records: list[dict[str, Any]], page_type: str
+) -> tuple[bool, str, list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    if not records:
+        return False, "failed", [], ["No candidate listing records were discovered"]
+
+    valid_records: list[dict[str, Any]] = []
+    dropped_count = 0
+
+    for item in records:
+        is_valid, reason = validate_single_record(item, page_type)
+        if is_valid:
+            valid_records.append(item)
+        else:
+            dropped_count += 1
+            if reason and len(warnings) < 10:
+                warnings.append(reason)
+
+    if not valid_records:
+        warnings.append("All candidate records failed validation criteria")
+        return False, "failed", [], warnings
+
+    if dropped_count > 0:
+        warnings.append(f"{dropped_count} candidate records dropped during validation")
+        status = "partial"
+    else:
+        status = "passed"
+
+    return True, status, valid_records, warnings
+
+
+
+================================================
+FILE: app/security/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: app/security/url_validation.py
+================================================
+import ipaddress
+import socket
+from urllib.parse import urlsplit, urlunsplit
+
+RESTRICTED_NETWORKS = [
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.0.0.0/24"),
+    ipaddress.ip_network("192.0.2.0/24"),
+    ipaddress.ip_network("192.88.99.0/24"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"),
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("240.0.0.0/4"),
+    ipaddress.ip_network("255.255.255.255/32"),
+    ipaddress.ip_network("::/128"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("::ffff:0:0/96"),
+    ipaddress.ip_network("100::/64"),
+    ipaddress.ip_network("2001:db8::/32"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+    ipaddress.ip_network("ff00::/8"),
+]
+
+FORBIDDEN_HOSTNAME_SUFFIXES = (
+    "localhost",
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".home",
+    ".corp",
+    ".arpa",
+)
+
+
+class URLValidationError(ValueError):
+    pass
+
+
+def is_ip_address_forbidden(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    # Security requirement: Extract embedded IPv4 from IPv4-mapped IPv6 to prevent SSRF bypass
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        return True
+
+    for network in RESTRICTED_NETWORKS:
+        if ip in network:
+            return True
+
+    return False
+
+
+def validate_ip_string(ip_str: str) -> None:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+    except ValueError as e:
+        raise URLValidationError(f"Invalid IP address representation: {ip_str}") from e
+
+    if is_ip_address_forbidden(ip_obj):
+        raise URLValidationError(f"Target IP address is restricted or non-public: {ip_str}")
+
+
+def resolve_hostname_ips(hostname: str, port: int) -> list[str]:
+    try:
+        addr_info = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise URLValidationError(f"Hostname could not be resolved: {hostname}") from e
+
+    ip_addresses: list[str] = []
+    for entry in addr_info:
+        sockaddr = entry[4]
+        ip = sockaddr[0]
+        if ip not in ip_addresses:
+            ip_addresses.append(ip)
+
+    if not ip_addresses:
+        raise URLValidationError(f"No IP addresses resolved for hostname: {hostname}")
+
+    return ip_addresses
+
+
+def validate_url(url: str, resolve_dns: bool = True) -> str:
+    if not isinstance(url, str):
+        raise URLValidationError("URL must be a string")
+
+    clean_url = url.strip()
+    if not clean_url:
+        raise URLValidationError("URL cannot be empty")
+
+    try:
+        parsed = urlsplit(clean_url)
+    except Exception as e:
+        raise URLValidationError(f"Malformed URL: {e}") from e
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        raise URLValidationError(f"Unsupported URL scheme '{scheme}'. Only HTTP and HTTPS are permitted.")
+
+    # Security requirement: Reject credentials embedded in authority to prevent credential leaking and URL confusion
+    if parsed.username or parsed.password:
+        raise URLValidationError("Embedded credentials in URLs are strictly forbidden")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise URLValidationError("URL is missing a valid hostname")
+
+    hostname_lower = hostname.lower()
+
+    if hostname_lower in ("localhost", "broadcasthost") or any(
+        hostname_lower.endswith(suffix) for suffix in FORBIDDEN_HOSTNAME_SUFFIXES
+    ):
+        raise URLValidationError(f"Forbidden private or local hostname: {hostname}")
+
+    port = parsed.port
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    elif not (1 <= port <= 65535):
+        raise URLValidationError(f"Invalid port number: {port}")
+
+    # Security requirement: Strip bracket notation on IPv6 literals prior to ip_address validation
+    host_to_check = hostname_lower
+    if host_to_check.startswith("[") and host_to_check.endswith("]"):
+        host_to_check = host_to_check[1:-1]
+
+    try:
+        ipaddress.ip_address(host_to_check)
+        is_ip_literal = True
+    except ValueError:
+        is_ip_literal = False
+
+    if is_ip_literal:
+        validate_ip_string(host_to_check)
+    elif resolve_dns:
+        resolved_ips = resolve_hostname_ips(hostname_lower, port)
+        for ip in resolved_ips:
+            validate_ip_string(ip)
+
+    normalized_url = urlunsplit(
+        (scheme, parsed.netloc, parsed.path or "/", parsed.query, parsed.fragment)
+    )
+    return normalized_url
+
+
+
+================================================
+FILE: tests/__init__.py
+================================================
+
+
+
+
+================================================
+FILE: tests/test_api.py
+================================================
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+from fastapi.testclient import TestClient
+from app.browser.page_loader import (
+    BotChallengeDetectedError,
+    EmptyPageError,
+    NavigationError,
+    PageLoadTimeoutError,
+)
+from app.main import app
+
+client = TestClient(app)
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture(filename: str) -> str:
+    path = FIXTURES_DIR / filename
+    return path.read_text(encoding="utf-8")
+
+
+def test_root_endpoint() -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "PIRATES ALERT V3 API"
+    assert "GET /health" in data["endpoints"]
+
+
+def test_health_endpoint() -> None:
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "playwrightAvailable" in data
+    assert "timestamp" in data
+
+
+def test_extract_rejects_ssrf_urls() -> None:
+    blocked_urls = (
+        "http://localhost:8000/secret",
+        "http://127.0.0.1:9000/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/admin",
+        "http://10.0.0.1/status",
+        "ftp://example.com/test",
+    )
+    for target in blocked_urls:
+        response = client.post("/api/v1/extract", json={"url": target})
+        assert response.status_code == 400
+        assert "URL validation failed" in response.json()["detail"]
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_success_ecommerce(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/search"
+    mock_load.return_value = (load_fixture("ecommerce_products.html"), "https://example.com/search")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/search", "pageType": "ecommerce"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["pageType"] == "ecommerce"
+    assert data["sourceUrl"] == "https://example.com/search"
+    assert len(data["records"]) == 3
+
+    first = data["records"][0]
+    assert "Galaxy Ultra" in first["title"]
+    assert first["sellingPrice"] == 69999.0
+    assert first["currency"] == "INR"
+    assert first["productId"] == "PROD-101"
+    assert data["metadata"]["recordCount"] == 3
+    assert data["metadata"]["validationStatus"] == "passed"
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_success_generic_jobs(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/careers"
+    mock_load.return_value = (load_fixture("generic_jobs.html"), "https://example.com/careers")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/careers", "pageType": "generic_listing"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["pageType"] == "generic_listing"
+    assert len(data["records"]) == 3
+    assert data["records"][0]["extra"]["company"] == "Acme Cloud Systems"
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_bot_challenge_returns_403(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/blocked"
+    mock_load.side_effect = BotChallengeDetectedError("Bot protection challenge detected")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/blocked"},
+    )
+    assert response.status_code == 403
+    assert "Bot protection challenge detected" in response.json()["detail"]
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_timeout_returns_504(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/slow"
+    mock_load.side_effect = PageLoadTimeoutError("Navigation timed out after 30000ms")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/slow"},
+    )
+    assert response.status_code == 504
+    assert "timed out" in response.json()["detail"]
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_empty_page_returns_422(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/empty"
+    mock_load.side_effect = EmptyPageError("Page returned empty content")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/empty"},
+    )
+    assert response.status_code == 422
+    assert "empty" in response.json()["detail"]
+
+
+@patch("app.main.load_rendered_page", new_callable=AsyncMock)
+@patch("app.main.validate_url")
+def test_extract_navigation_failure_returns_502(mock_validate_url, mock_load) -> None:
+    mock_validate_url.return_value = "https://example.com/error"
+    mock_load.side_effect = NavigationError("Connection refused by target")
+
+    response = client.post(
+        "/api/v1/extract",
+        json={"url": "https://example.com/error"},
+    )
+    assert response.status_code == 502
+    assert "Connection refused" in response.json()["detail"]
+
+
+
+================================================
+FILE: tests/test_browser_integration.py
+================================================
+from pathlib import Path
+import pytest
+from app.browser.page_loader import load_rendered_page
+from app.browser.playwright_manager import playwright_manager
+from app.extraction.engine import run_extraction_pipeline
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.asyncio
+async def test_playwright_manager_lifecycle() -> None:
+    assert await playwright_manager.is_available() is True
+    browser = await playwright_manager.get_browser()
+    assert browser.is_connected() is True
+
+
+@pytest.mark.asyncio
+async def test_playwright_renders_and_extracts_local_page(tmp_path: Path) -> None:
+    html_content = (FIXTURES_DIR / "ecommerce_products.html").read_text(encoding="utf-8")
+    test_file = tmp_path / "test_products.html"
+    test_file.write_text(html_content, encoding="utf-8")
+
+    # Serve using python's http server on an allowed mock or test file
+    # We can test page loading directly using the pipeline
+    result = run_extraction_pipeline(
+        html=html_content,
+        source_url="https://example.com/catalog",
+        requested_page_type="ecommerce",
+    )
+    assert result["success"] is True
+    assert len(result["records"]) == 3
+
+
+
+================================================
+FILE: tests/test_candidate_detection.py
+================================================
+from pathlib import Path
+from app.discovery.candidate_detector import detect_candidate_records
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture(filename: str) -> str:
+    path = FIXTURES_DIR / filename
+    return path.read_text(encoding="utf-8")
+
+
+def test_detects_ecommerce_product_cards() -> None:
+    html = load_fixture("ecommerce_products.html")
+    records = detect_candidate_records(html, "https://example.com/search", "ecommerce")
+
+    assert len(records) == 3
+    first = records[0]
+    assert "Galaxy Ultra" in first["title"]
+    assert first["url"] == "https://example.com/items/galaxy-ultra-256gb?pid=PROD-101"
+    assert first["productId"] == "PROD-101"
+    assert first["sellingPrice"] == 69999.0
+    assert first["mrp"] == 79999.0
+    assert first["currency"] == "INR"
+    assert first["rating"] == 4.5
+    assert first["reviewCount"] == 1240
+
+
+def test_detects_generic_job_cards() -> None:
+    html = load_fixture("generic_jobs.html")
+    records = detect_candidate_records(html, "https://example.com/careers", "generic_listing")
+
+    assert len(records) == 3
+    first = records[0]
+    assert "Senior Python Backend Engineer" in first["title"]
+    assert first["url"] == "https://example.com/jobs/senior-python-backend-engineer"
+    assert first["sellingPrice"] is None
+    assert first["extra"].get("company") == "Acme Cloud Systems"
+    assert "Bengaluru" in first["extra"].get("location", "")
+
+
+def test_detects_directory_entries() -> None:
+    html = load_fixture("directory_entries.html")
+    records = detect_candidate_records(html, "https://example.com/directory", "generic_listing")
+
+    assert len(records) == 3
+    titles = [r["title"] for r in records]
+    assert any("Apex Dental Care" in t for t in titles)
+    assert any("Green Leaf" in t for t in titles)
+    assert any("Metro Veterinary" in t for t in titles)
+
+
+def test_ignores_nav_and_footer_extracts_only_main_listings() -> None:
+    html = load_fixture("repeated_with_nav_footer.html")
+    records = detect_candidate_records(html, "https://example.com/store", "ecommerce")
+
+    assert len(records) == 3
+    titles = [r["title"] for r in records]
+    assert not any(t in ("Home", "Deals", "Categories", "About Us", "Privacy Policy") for t in titles)
+    assert any("Espresso Maker" in t for t in titles)
+    assert any("Coffee Grinder" in t for t in titles)
+    assert any("Milk Frother" in t for t in titles)
+
+
+def test_handles_malformed_html() -> None:
+    html = load_fixture("malformed_markup.html")
+    records = detect_candidate_records(html, "https://example.com/deals", "ecommerce")
+
+    assert len(records) >= 2
+    titles = [r["title"] for r in records]
+    assert any("Ergonomic Vertical Mouse" in t for t in titles)
+    assert any("RGB Mechanical Keyboard" in t for t in titles)
+
+
+def test_no_candidates_on_editorial_page() -> None:
+    html = load_fixture("no_listings_page.html")
+    records = detect_candidate_records(html, "https://example.com/privacy", "generic_listing")
+
+    assert len(records) == 0
+
+
+
+================================================
+FILE: tests/test_extraction.py
+================================================
+from pathlib import Path
+from app.discovery.structured_data import extract_from_structured_data
+from app.extraction.engine import run_extraction_pipeline
+from app.extraction.normalizer import (
+    extract_price_and_currency,
+    normalize_url,
+    parse_rating,
+    parse_review_count,
+)
+from app.extraction.validator import validate_extracted_records
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def load_fixture(filename: str) -> str:
+    path = FIXTURES_DIR / filename
+    return path.read_text(encoding="utf-8")
+
+
+def test_normalizer_price_and_currency() -> None:
+    price, cur = extract_price_and_currency("â‚¹69,999")
+    assert price == 69999.0
+    assert cur == "INR"
+
+    price, cur = extract_price_and_currency("$499.99")
+    assert price == 499.99
+    assert cur == "USD"
+
+    price, cur = extract_price_and_currency("â‚¬35.50")
+    assert price == 35.50
+    assert cur == "EUR"
+
+    price, cur = extract_price_and_currency("Â£120")
+    assert price == 120.0
+    assert cur == "GBP"
+
+    # Should not mistake phone numbers for prices
+    phone_price, phone_cur = extract_price_and_currency("+91 9876543210")
+    assert phone_price is None
+
+    # Should not mistake pure discount percentages for prices
+    disc_price, disc_cur = extract_price_and_currency("50% off discount")
+    assert disc_price is None
+
+
+def test_normalizer_rating_and_reviews() -> None:
+    assert parse_rating("4.5 out of 5") == 4.5
+    assert parse_rating("4.8/5") == 4.8
+    assert parse_rating("4.2 â˜…") == 4.2
+    assert parse_rating("Invalid Rating") is None
+
+    assert parse_review_count("(1,240 reviews)") == 1240
+    assert parse_review_count("350 ratings") == 350
+    assert parse_review_count("1.5k reviews") == 1500
+
+
+def test_normalizer_url() -> None:
+    base = "https://example.com/catalog/electronics"
+    assert normalize_url(base, "/item/123#reviews") == "https://example.com/item/123"
+    assert normalize_url(base, "item/456?ref=search") == "https://example.com/catalog/item/456?ref=search"
+    assert normalize_url(base, "javascript:void(0)") is None
+    assert normalize_url(base, "mailto:help@example.com") is None
+
+
+def test_structured_data_extraction() -> None:
+    html = load_fixture("jsonld_ecommerce.html")
+    records, detected_type = extract_from_structured_data(html, "https://example.com/audio")
+
+    assert detected_type == "ecommerce"
+    assert len(records) == 2
+
+    first = records[0]
+    assert first["title"] == "Sony WH-1000XM5 Noise-Canceling Headphones"
+    assert first["sellingPrice"] == 29990.0
+    assert first["mrp"] == 34990.0
+    assert first["currency"] == "INR"
+    assert first["productId"] == "SONY-XM5-BLK"
+    assert first["rating"] == 4.6
+    assert first["reviewCount"] == 4510
+
+
+def test_pipeline_ecommerce_products() -> None:
+    html = load_fixture("ecommerce_products.html")
+    result = run_extraction_pipeline(html, "https://example.com/search", "auto")
+
+    assert result["success"] is True
+    assert result["pageType"] == "ecommerce"
+    assert result["metadata"]["recordCount"] == 3
+    assert result["metadata"]["validationStatus"] == "passed"
+    assert len(result["records"]) == 3
+
+
+def test_pipeline_generic_jobs() -> None:
+    html = load_fixture("generic_jobs.html")
+    result = run_extraction_pipeline(html, "https://example.com/careers", "auto")
+
+    assert result["success"] is True
+    assert result["pageType"] == "generic_listing"
+    assert result["metadata"]["recordCount"] == 3
+    assert result["metadata"]["validationStatus"] == "passed"
+    assert result["records"][0]["extra"]["company"] == "Acme Cloud Systems"
+
+
+def test_pipeline_listings_without_prices() -> None:
+    html = load_fixture("no_prices_listing.html")
+    result = run_extraction_pipeline(html, "https://example.com/repos", "generic_listing")
+
+    assert result["success"] is True
+    assert result["metadata"]["recordCount"] == 3
+    for r in result["records"]:
+        assert r["sellingPrice"] is None
+
+
+def test_pipeline_listings_without_images() -> None:
+    html = load_fixture("no_images_listing.html")
+    result = run_extraction_pipeline(html, "https://example.com/commercial", "generic_listing")
+
+    assert result["success"] is True
+    assert result["metadata"]["recordCount"] == 3
+    for r in result["records"]:
+        assert r["imageUrl"] is None
+
+
+def test_pipeline_deduplication() -> None:
+    html = load_fixture("duplicate_records.html")
+    result = run_extraction_pipeline(html, "https://example.com/deals", "ecommerce")
+
+    assert result["success"] is True
+    assert result["metadata"]["recordCount"] == 3
+    urls = [r["url"] for r in result["records"]]
+    assert len(urls) == len(set(urls))
+
+
+def test_pipeline_editorial_page_fails_validation() -> None:
+    html = load_fixture("no_listings_page.html")
+    result = run_extraction_pipeline(html, "https://example.com/terms", "auto")
+
+    assert result["success"] is False
+    assert result["metadata"]["recordCount"] == 0
+    assert result["metadata"]["validationStatus"] == "failed"
+    assert len(result["records"]) == 0
+
+
+def test_validator_drops_boilerplate_records() -> None:
+    candidates = [
+        {"title": "Privacy Policy", "url": "https://example.com/privacy"},
+        {"title": "Valid Job Listing", "url": "https://example.com/jobs/1"},
+    ]
+    is_valid, status, valid, warnings = validate_extracted_records(candidates, "generic_listing")
+    assert is_valid is True
+    assert status == "partial"
+    assert len(valid) == 1
+    assert valid[0]["title"] == "Valid Job Listing"
+
+
+
+================================================
+FILE: tests/test_url_validation.py
+================================================
+from unittest.mock import patch
+import pytest
+from app.security.url_validation import URLValidationError, validate_url
+
+
+def test_valid_public_urls() -> None:
+    with patch("socket.getaddrinfo") as mock_dns:
+        mock_dns.return_value = [(2, 1, 6, "", ("93.184.216.34", 443))]
+        assert validate_url("https://example.com/search?q=test") == "https://example.com/search?q=test"
+        assert validate_url("http://example.org/listing") == "http://example.org/listing"
+
+
+def test_rejects_localhost_hostnames() -> None:
+    for url in (
+        "http://localhost",
+        "http://localhost:8000/api",
+        "https://sub.localhost/test",
+        "http://broadcasthost/test",
+        "http://internal.corp/test",
+        "http://service.local/test",
+        "http://gateway.lan/test",
+    ):
+        with pytest.raises(URLValidationError):
+            validate_url(url, resolve_dns=False)
+
+
+def test_rejects_loopback_and_private_ipv4() -> None:
+    forbidden_urls = (
+        "http://127.0.0.1/",
+        "http://127.0.0.2:8080/",
+        "http://127.100.0.1/",
+        "http://0.0.0.0/",
+        "http://10.0.0.1/",
+        "http://10.254.1.1:3000/",
+        "http://172.16.0.1/",
+        "http://172.31.255.255/",
+        "http://192.168.0.1/",
+        "http://192.168.1.100:8000/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://100.64.0.1/",
+        "http://255.255.255.255/",
+    )
+    for url in forbidden_urls:
+        with pytest.raises(URLValidationError):
+            validate_url(url, resolve_dns=False)
+
+
+def test_rejects_ipv6_loopback_and_private() -> None:
+    forbidden_ipv6 = (
+        "http://[::1]/",
+        "http://[::]/",
+        "http://[fc00::1]/",
+        "http://[fe80::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::ffff:192.168.1.1]/",
+    )
+    for url in forbidden_ipv6:
+        with pytest.raises(URLValidationError):
+            validate_url(url, resolve_dns=False)
+
+
+def test_rejects_unsupported_schemes() -> None:
+    for url in (
+        "ftp://example.com/file",
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "data:text/html,<h1>Hello</h1>",
+        "gopher://example.com/",
+    ):
+        with pytest.raises(URLValidationError):
+            validate_url(url, resolve_dns=False)
+
+
+def test_rejects_embedded_credentials() -> None:
+    with pytest.raises(URLValidationError):
+        validate_url("http://admin:secret@example.com/dashboard", resolve_dns=False)
+
+
+def test_rejects_malformed_urls() -> None:
+    invalid_inputs = ("", "   ", "not-a-url", "http://", "https://:8080")
+    for item in invalid_inputs:
+        with pytest.raises(URLValidationError):
+            validate_url(item, resolve_dns=False)
+
+
+def test_rejects_hostname_resolving_to_private_ip() -> None:
+    with patch("socket.getaddrinfo") as mock_dns:
+        mock_dns.return_value = [(2, 1, 6, "", ("127.0.0.1", 80))]
+        with pytest.raises(URLValidationError):
+            validate_url("http://malicious-public-domain.com/path", resolve_dns=True)
+
+    with patch("socket.getaddrinfo") as mock_dns:
+        mock_dns.return_value = [(2, 1, 6, "", ("192.168.1.50", 443))]
+        with pytest.raises(URLValidationError):
+            validate_url("https://another-domain.com/path", resolve_dns=True)
+
+
+def test_rejects_unresolvable_hostname() -> None:
+    import socket
+    with patch("socket.getaddrinfo", side_effect=socket.gaierror("Name or service not known")):
+        with pytest.raises(URLValidationError):
+            validate_url("https://non-existent-domain-xyz123.com", resolve_dns=True)
+
+
+
+================================================
+FILE: tests/fixtures/directory_entries.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>City Business Directory</title>
+</head>
+<body>
+    <div class="directory-container">
+        <div class="directory-card">
+            <h2 class="business-name">
+                <a href="/biz/apex-dental-care">Apex Dental Care Clinic</a>
+            </h2>
+            <div class="meta">
+                <span class="category">Healthcare</span>
+                <span class="location">MG Road, Indiranagar</span>
+                <span class="rating">4.9 â˜…</span>
+                <span class="review-count">480 reviews</span>
+            </div>
+            <p class="summary">Comprehensive dental hygiene, implants, and orthodontic treatments.</p>
+        </div>
+        <div class="directory-card">
+            <h2 class="business-name">
+                <a href="/biz/green-leaf-wellness">Green Leaf Holistic Wellness</a>
+            </h2>
+            <div class="meta">
+                <span class="category">Ayurveda</span>
+                <span class="location">Koramangala 4th Block</span>
+                <span class="rating">4.7 â˜…</span>
+                <span class="review-count">210 reviews</span>
+            </div>
+            <p class="summary">Ayurvedic consultation, panchakarma therapies, and organic remedies.</p>
+        </div>
+        <div class="directory-card">
+            <h2 class="business-name">
+                <a href="/biz/city-pet-hospital">Metro Veterinary Hospital</a>
+            </h2>
+            <div class="meta">
+                <span class="category">Veterinary</span>
+                <span class="location">Whitefield Main Road</span>
+                <span class="rating">4.6 â˜…</span>
+                <span class="review-count">350 reviews</span>
+            </div>
+            <p class="summary">24/7 emergency pet care, diagnostics, vaccinations, and grooming.</p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/duplicate_records.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Featured Deals with Duplicates</title>
+</head>
+<body>
+    <div class="product-stream">
+        <div class="deal-card" data-id="DEAL-001">
+            <img src="/img/air-fryer.jpg" alt="Digital Air Fryer 5.5L">
+            <h3><a href="/deals/digital-air-fryer-55l">Digital Air Fryer 5.5L</a></h3>
+            <span class="price">â‚¹5,499</span>
+        </div>
+        <div class="deal-card" data-id="DEAL-002">
+            <img src="/img/blender.jpg" alt="High Speed Nutrient Blender">
+            <h3><a href="/deals/high-speed-nutrient-blender">High Speed Nutrient Blender</a></h3>
+            <span class="price">â‚¹3,299</span>
+        </div>
+        <!-- Duplicate of DEAL-001 with identical URL -->
+        <div class="deal-card" data-id="DEAL-001">
+            <img src="/img/air-fryer.jpg" alt="Digital Air Fryer 5.5L">
+            <h3><a href="/deals/digital-air-fryer-55l">Digital Air Fryer 5.5L</a></h3>
+            <span class="price">â‚¹5,499</span>
+        </div>
+        <div class="deal-card" data-id="DEAL-003">
+            <img src="/img/toaster.jpg" alt="4-Slice Stainless Steel Toaster">
+            <h3><a href="/deals/4-slice-stainless-toaster">4-Slice Stainless Steel Toaster</a></h3>
+            <span class="price">â‚¹2,199</span>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/ecommerce_products.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Search Results - Electronics</title>
+</head>
+<body>
+    <div class="product-grid">
+        <div class="product-card" data-product-id="PROD-101">
+            <img class="product-thumb" src="/images/phone-a.jpg" alt="Galaxy Ultra Smartphone 256GB">
+            <h2 class="product-title">
+                <a href="/items/galaxy-ultra-256gb?pid=PROD-101">Galaxy Ultra Smartphone 256GB</a>
+            </h2>
+            <div class="price-box">
+                <span class="selling-price">â‚¹69,999</span>
+                <del class="mrp-price">â‚¹79,999</del>
+            </div>
+            <div class="review-meta">
+                <span class="rating">4.5 out of 5</span>
+                <span class="review-count">(1,240 reviews)</span>
+            </div>
+        </div>
+        <div class="product-card" data-product-id="PROD-102">
+            <img class="product-thumb" src="/images/laptop-b.jpg" alt="ProBook 16-inch M3 Max">
+            <h2 class="product-title">
+                <a href="/items/probook-16-m3?pid=PROD-102">ProBook 16-inch M3 Max</a>
+            </h2>
+            <div class="price-box">
+                <span class="selling-price">â‚¹1,99,900</span>
+                <del class="mrp-price">â‚¹2,19,900</del>
+            </div>
+            <div class="review-meta">
+                <span class="rating">4.8 out of 5</span>
+                <span class="review-count">(320 reviews)</span>
+            </div>
+        </div>
+        <div class="product-card" data-product-id="PROD-103">
+            <img class="product-thumb" src="/images/anc-headphones.jpg" alt="Wireless Noise Cancelling Headphones">
+            <h2 class="product-title">
+                <a href="/items/wireless-anc-headphones?pid=PROD-103">Wireless Noise Cancelling Headphones</a>
+            </h2>
+            <div class="price-box">
+                <span class="selling-price">â‚¹14,990</span>
+                <del class="mrp-price">â‚¹19,990</del>
+            </div>
+            <div class="review-meta">
+                <span class="rating">4.2 out of 5</span>
+                <span class="review-count">(890 reviews)</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/generic_jobs.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Engineering Careers - Tech Openings</title>
+</head>
+<body>
+    <div class="jobs-list">
+        <article class="job-card">
+            <h3 class="job-title">
+                <a href="/jobs/senior-python-backend-engineer">Senior Python Backend Engineer</a>
+            </h3>
+            <div class="job-details">
+                <span class="company-name">Acme Cloud Systems</span>
+                <span class="job-location">Bengaluru, Remote</span>
+                <span class="category-badge">Full-time</span>
+            </div>
+            <p class="description">Architect scalable microservices with FastAPI, PostgreSQL, and event streaming systems.</p>
+        </article>
+        <article class="job-card">
+            <h3 class="job-title">
+                <a href="/jobs/site-reliability-engineer">Site Reliability Engineer</a>
+            </h3>
+            <div class="job-details">
+                <span class="company-name">Acme Cloud Systems</span>
+                <span class="job-location">Hyderabad, Hybrid</span>
+                <span class="category-badge">Full-time</span>
+            </div>
+            <p class="description">Maintain zero downtime kubernetes clusters and observability infrastructure.</p>
+        </article>
+        <article class="job-card">
+            <h3 class="job-title">
+                <a href="/jobs/distributed-systems-lead">Distributed Systems Lead</a>
+            </h3>
+            <div class="job-details">
+                <span class="company-name">Acme Cloud Systems</span>
+                <span class="job-location">Bengaluru, Onsite</span>
+                <span class="category-badge">Lead Role</span>
+            </div>
+            <p class="description">Drive high throughput consensus and distributed caching implementations.</p>
+        </article>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/jsonld_ecommerce.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>JSON-LD Products Catalog</title>
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": 1,
+                "item": {
+                    "@type": "Product",
+                    "name": "Sony WH-1000XM5 Noise-Canceling Headphones",
+                    "sku": "SONY-XM5-BLK",
+                    "url": "https://example.com/products/sony-wh-1000xm5",
+                    "image": "https://example.com/images/sony-xm5.jpg",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": 29990.00,
+                        "highPrice": 34990.00,
+                        "priceCurrency": "INR",
+                        "availability": "https://schema.org/InStock"
+                    },
+                    "aggregateRating": {
+                        "@type": "AggregateRating",
+                        "ratingValue": 4.6,
+                        "reviewCount": 4510
+                    }
+                }
+            },
+            {
+                "@type": "ListItem",
+                "position": 2,
+                "item": {
+                    "@type": "Product",
+                    "name": "Bose QuietComfort 45 Bluetooth Headphones",
+                    "sku": "BOSE-QC45-SLV",
+                    "url": "https://example.com/products/bose-qc45",
+                    "image": "https://example.com/images/bose-qc45.jpg",
+                    "offers": {
+                        "@type": "Offer",
+                        "price": 24900.00,
+                        "highPrice": 29900.00,
+                        "priceCurrency": "INR",
+                        "availability": "https://schema.org/InStock"
+                    },
+                    "aggregateRating": {
+                        "@type": "AggregateRating",
+                        "ratingValue": 4.5,
+                        "reviewCount": 2180
+                    }
+                }
+            }
+        ]
+    }
+    </script>
+</head>
+<body>
+    <h1>Audio Electronics</h1>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/malformed_markup.html
+================================================
+<html>
+<head><title>Unclosed & Broken HTML</title>
+<body>
+<div class="container">
+    <div class="row">
+        <div class="item-card" data-sku="SKU-771">
+            <img src="/img/wireless-mouse.jpg" alt="Ergonomic Vertical Mouse">
+            <h2><a href="/items/ergonomic-mouse">Ergonomic Vertical Mouse</a></h2>
+            <div class="prices">
+                <span class="price">$39.99
+                <span class="mrp">$49.99
+            </div>
+            <div class="rating">4.3 / 5 (540 reviews)</div>
+        </div>
+        <div class="item-card" data-sku="SKU-772">
+            <img src="/img/mechanical-keyboard.jpg" alt="RGB Mechanical Keyboard">
+            <h2><a href="/items/rgb-keyboard">RGB Mechanical Keyboard</a></h2>
+            <div class="prices">
+                <span class="price">$89.00
+                <span class="mrp">$119.00
+            </div>
+            <div class="rating">4.7 / 5 (1,100 reviews)</div>
+        </div>
+        <div class="item-card" data-sku="SKU-773">
+            <img src="/img/desk-mat.jpg" alt="Extended Gaming Desk Mat">
+            <h2><a href="/items/desk-mat">Extended Gaming Desk Mat</a></h2>
+            <div class="prices">
+                <span class="price">$19.50
+            </div>
+            <div class="rating">4.1 / 5 (85 reviews)</div>
+        </div>
+    </div>
+
+
+
+================================================
+FILE: tests/fixtures/no_images_listing.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Commercial Real Estate Rentals</title>
+</head>
+<body>
+    <div class="properties-container">
+        <div class="property-card">
+            <h4><a href="/property/bengaluru-tech-park-office">Plug & Play Commercial Office Space</a></h4>
+            <div class="price-info">
+                <span class="price">â‚¹1,50,000 / month</span>
+            </div>
+            <div class="specs">
+                <span class="location">Outer Ring Road, Bengaluru</span>
+                <span class="category">Office Space</span>
+            </div>
+        </div>
+        <div class="property-card">
+            <h4><a href="/property/koramangala-retail-outlet">Prime High-Street Retail Store</a></h4>
+            <div class="price-info">
+                <span class="price">â‚¹2,80,000 / month</span>
+            </div>
+            <div class="specs">
+                <span class="location">100 Feet Road, Koramangala</span>
+                <span class="category">Commercial Retail</span>
+            </div>
+        </div>
+        <div class="property-card">
+            <h4><a href="/property/electronic-city-warehouse">Industrial Logistics Warehouse</a></h4>
+            <div class="price-info">
+                <span class="price">â‚¹4,20,000 / month</span>
+            </div>
+            <div class="specs">
+                <span class="location">Phase 1, Electronic City</span>
+                <span class="category">Warehouse</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/no_listings_page.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Privacy Policy - MySite</title>
+</head>
+<body>
+    <header>
+        <h1>MySite Legal Center</h1>
+    </header>
+    <main>
+        <article class="legal-document">
+            <h2>Terms of Service and Privacy Policy</h2>
+            <p>Welcome to our privacy policy page. This document governs how we collect, store, and process your personal data across our services.</p>
+            <h3>Information We Collect</h3>
+            <p>We may collect personal identification information including name, email address, and cookies when you browse our site.</p>
+            <h3>How We Protect Your Information</h3>
+            <p>We adopt appropriate data collection, storage and processing practices and security measures to protect against unauthorized access.</p>
+            <h3>Contact Us</h3>
+            <p>If you have questions regarding this policy, please reach out to our legal department at legal@example.com.</p>
+        </article>
+    </main>
+    <footer>
+        <p>&copy; 2026 MySite. All rights reserved.</p>
+    </footer>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/no_prices_listing.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Open Source Repositories - Developer Directory</title>
+</head>
+<body>
+    <div class="repo-list">
+        <div class="repo-card">
+            <h3><a href="/repos/fastapi-async-worker">FastAPI Async Worker Engine</a></h3>
+            <p>High performance distributed background task runner using AsyncIO and Redis streams.</p>
+            <span class="category">Python Library</span>
+        </div>
+        <div class="repo-card">
+            <h3><a href="/repos/playwright-stealth-toolkit">Playwright Headless Helper</a></h3>
+            <p>Utilities for deterministic browser context management and content scraping.</p>
+            <span class="category">Web Automation</span>
+        </div>
+        <div class="repo-card">
+            <h3><a href="/repos/pydantic-normalizer">Pydantic Schema Transformer</a></h3>
+            <p>Extensible normalization pipelines for arbitrary JSON payloads and unstructured data.</p>
+            <span class="category">Data Modeling</span>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+================================================
+FILE: tests/fixtures/repeated_with_nav_footer.html
+================================================
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SuperStore - Search Results</title>
+</head>
+<body>
+    <header class="site-header">
+        <nav class="main-navigation">
+            <ul class="nav-links">
+                <li><a href="/home">Home</a></li>
+                <li><a href="/deals">Deals</a></li>
+                <li><a href="/categories">Categories</a></li>
+                <li><a href="/account">My Account</a></li>
+                <li><a href="/cart">Cart</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <div class="page-body">
+        <aside class="sidebar-filters">
+            <h3>Filter By Price</h3>
+            <ul>
+                <li><a href="?price=under-1000">Under â‚¹1,000</a></li>
+                <li><a href="?price=1000-5000">â‚¹1,000 - â‚¹5,000</a></li>
+                <li><a href="?price=above-5000">Above â‚¹5,000</a></li>
+            </ul>
+        </aside>
+
+        <main class="content-container">
+            <div class="product-shelf">
+                <div class="product-item" data-id="ITEM-901">
+                    <img src="/img/espresso-maker.jpg" alt="Deluxe Italian Espresso Maker">
+                    <h3><a href="/product/deluxe-italian-espresso-maker">Deluxe Italian Espresso Maker</a></h3>
+                    <div class="price-line">
+                        <span class="selling-price">â‚¹4,999</span>
+                        <del class="mrp">â‚¹6,999</del>
+                    </div>
+                </div>
+                <div class="product-item" data-id="ITEM-902">
+                    <img src="/img/coffee-grinder.jpg" alt="Conical Burr Coffee Grinder">
+                    <h3><a href="/product/conical-burr-coffee-grinder">Conical Burr Coffee Grinder</a></h3>
+                    <div class="price-line">
+                        <span class="selling-price">â‚¹3,499</span>
+                        <del class="mrp">â‚¹4,499</del>
+                    </div>
+                </div>
+                <div class="product-item" data-id="ITEM-903">
+                    <img src="/img/milk-frother.jpg" alt="Stainless Steel Milk Frother Wand">
+                    <h3><a href="/product/stainless-steel-milk-frother">Stainless Steel Milk Frother Wand</a></h3>
+                    <div class="price-line">
+                        <span class="selling-price">â‚¹1,299</span>
+                        <del class="mrp">â‚¹1,799</del>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <footer class="site-footer">
+        <div class="footer-columns">
+            <ul class="footer-links">
+                <li><a href="/about-us">About Us</a></li>
+                <li><a href="/contact">Contact</a></li>
+                <li><a href="/privacy-policy">Privacy Policy</a></li>
+                <li><a href="/terms-of-service">Terms of Service</a></li>
+                <li><a href="/careers">Careers</a></li>
+                <li><a href="/sitemap">Sitemap</a></li>
+            </ul>
+        </div>
+        <p>&copy; 2026 SuperStore Inc. All Rights Reserved.</p>
+    </footer>
+</body>
+</html>
+
+
