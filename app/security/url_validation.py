@@ -38,6 +38,9 @@ FORBIDDEN_HOSTNAME_SUFFIXES = (
     ".home",
     ".corp",
     ".arpa",
+    "metadata.google.internal",
+    "instance-data",
+    "metadata.azure.com",
 )
 
 
@@ -140,14 +143,20 @@ def validate_url(url: str, resolve_dns: bool = True) -> str:
         host_to_check = host_to_check[1:-1]
 
     try:
-        ipaddress.ip_address(host_to_check)
-        is_ip_literal = True
+        if host_to_check.isdigit():
+            ip_obj = ipaddress.IPv4Address(int(host_to_check))
+            if is_ip_address_forbidden(ip_obj):
+                raise URLValidationError(f"Target IP address is restricted or non-public: {host_to_check}")
+            is_ip_literal = True
+        else:
+            ipaddress.ip_address(host_to_check)
+            is_ip_literal = True
     except ValueError:
         is_ip_literal = False
 
-    if is_ip_literal:
+    if is_ip_literal and not host_to_check.isdigit():
         validate_ip_string(host_to_check)
-    elif resolve_dns:
+    elif not is_ip_literal and resolve_dns:
         resolved_ips = resolve_hostname_ips(hostname_lower, port)
         for ip in resolved_ips:
             validate_ip_string(ip)

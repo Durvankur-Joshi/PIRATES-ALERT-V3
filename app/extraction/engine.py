@@ -11,9 +11,16 @@ from app.discovery.candidate_detector import detect_candidate_records
 from app.discovery.page_classifier import classify_page
 from app.discovery.structured_data import extract_from_structured_data
 from app.extraction.normalizer import deduplicate_records
+from app.extraction.quality import evaluate_extraction_quality
 from app.extraction.validator import validate_extracted_records
+from app.monitoring.observability import (
+    StageTimer,
+    generate_request_id,
+    log_extraction_event,
+    metrics_collector,
+)
 from app.rules.fingerprint import compute_structural_fingerprint
-from app.rules.repository import strategy_repository
+from app.rules.repository import generate_strategy_id, strategy_repository
 
 
 class AwaitableExtractionResult(dict):
@@ -40,9 +47,10 @@ def run_deterministic_extraction(
     page_type = classify_page(html, structured_data_type=sd_type, requested_type=requested_page_type)
 
     if sd_records:
-        deduped_sd = deduplicate_records(sd_records)
-        is_valid, val_status, valid_records, val_warnings = validate_extracted_records(deduped_sd, page_type)
-        if is_valid and len(valid_records) >= 2:
+        report, valid_records = evaluate_extraction_quality(
+            sd_records, page_type, total_candidates=len(sd_records)
+        )
+        if report.is_acceptable and len(valid_records) >= 2:
             return {
                 "sourceUrl": source_url,
                 "pageType": page_type,
@@ -51,18 +59,21 @@ def run_deterministic_extraction(
                 "metadata": {
                     "recordCount": len(valid_records),
                     "extractionMethod": "structured_data",
-                    "validationStatus": val_status,
+                    "validationStatus": "passed",
                     "strategySource": "deterministic",
                     "aiCalls": 0,
-                    "warnings": val_warnings,
+                    "qualityScore": report.quality_score,
+                    "metrics": report.to_dict(),
+                    "warnings": report.warnings,
                 },
             }, page_type
 
     dom_records = detect_candidate_records(html, source_url, page_type)
     if dom_records:
-        deduped_dom = deduplicate_records(dom_records)
-        is_valid, val_status, valid_records, val_warnings = validate_extracted_records(deduped_dom, page_type)
-        if is_valid and len(valid_records) >= 2:
+        report, valid_records = evaluate_extraction_quality(
+            dom_records, page_type, total_candidates=len(dom_records)
+        )
+        if report.is_acceptable and len(valid_records) >= 2:
             return {
                 "sourceUrl": source_url,
                 "pageType": page_type,
@@ -71,10 +82,12 @@ def run_deterministic_extraction(
                 "metadata": {
                     "recordCount": len(valid_records),
                     "extractionMethod": "heuristic_dom",
-                    "validationStatus": val_status,
+                    "validationStatus": "passed",
                     "strategySource": "deterministic",
                     "aiCalls": 0,
-                    "warnings": val_warnings,
+                    "qualityScore": report.quality_score,
+                    "metrics": report.to_dict(),
+                    "warnings": report.warnings,
                 },
             }, page_type
 
@@ -89,6 +102,8 @@ def run_deterministic_extraction(
             "validationStatus": "failed",
             "strategySource": "deterministic",
             "aiCalls": 0,
+            "qualityScore": 0.0,
+            "metrics": {},
             "warnings": ["No credible listing records found on the page deterministically"],
         },
     }, page_type
@@ -99,73 +114,171 @@ async def _run_full_extraction_workflow(
     source_url: str,
     requested_page_type: str = "auto",
     enable_learning: bool = True,
+    request_id: Optional[str] = None,
 ) -> dict[str, Any]:
+    req_id = request_id or generate_request_id()
+    timer = StageTimer()
+
+    timer.start_stage("deterministic")
     det_result, page_type = run_deterministic_extraction(html, source_url, requested_page_type)
+    timer.end_stage()
+
     if det_result["success"] or not enable_learning:
+        total_ms = timer.total_duration_ms()
+        det_result["metadata"]["requestId"] = req_id
+        det_result["metadata"]["executionTimeMs"] = total_ms
+        det_result["metadata"]["stageDurations"] = timer.stage_durations
+
+        metrics_collector.record_extraction(
+            strategy_source="deterministic",
+            success=det_result["success"],
+            ai_calls=0,
+            duration_ms=total_ms,
+        )
+        log_extraction_event(
+            request_id=req_id,
+            hostname=source_url,
+            page_type=page_type,
+            strategy_source="deterministic",
+            record_count=det_result["metadata"]["recordCount"],
+            ai_calls=0,
+            quality_score=det_result["metadata"].get("qualityScore", 0.0),
+            total_ms=total_ms,
+            stage_durations=timer.stage_durations,
+            warnings=det_result["metadata"]["warnings"],
+        )
         return det_result
 
     fingerprint = compute_structural_fingerprint(html, source_url, page_type)
     recovery_status: Optional[str] = None
 
-    saved_strategy = await strategy_repository.get_strategy(
+    timer.start_stage("saved_strategy")
+    active_info = await strategy_repository.get_active_strategy_info(
         hostname=source_url,
         page_type=page_type,
-        fingerprint=fingerprint,
     )
 
-    if saved_strategy:
+    if active_info:
+        saved_strategy = active_info["strategy"]
         records = execute_strategy(html, source_url, saved_strategy)
-        is_valid, val_metrics, valid_records, val_warnings = validate_strategy_execution(records, page_type)
+        is_valid, val_metrics, valid_records, val_warnings = validate_strategy_execution(
+            records, page_type
+        )
 
         if is_valid and len(valid_records) >= 2:
+            timer.end_stage()
+            total_ms = timer.total_duration_ms()
+            result_meta = {
+                "recordCount": len(valid_records),
+                "extractionMethod": "saved_strategy",
+                "validationStatus": "passed",
+                "strategySource": "saved",
+                "aiCalls": 0,
+                "strategyId": active_info["strategy_id"],
+                "strategyVersion": active_info["version"],
+                "qualityScore": val_metrics.get("qualityScore", 0.0),
+                "fingerprint": fingerprint,
+                "metrics": val_metrics,
+                "warnings": val_warnings,
+                "requestId": req_id,
+                "executionTimeMs": total_ms,
+                "stageDurations": timer.stage_durations,
+            }
+            metrics_collector.record_extraction(
+                strategy_source="saved",
+                success=True,
+                ai_calls=0,
+                duration_ms=total_ms,
+            )
+            log_extraction_event(
+                request_id=req_id,
+                hostname=source_url,
+                page_type=page_type,
+                strategy_source="saved",
+                strategy_id=active_info["strategy_id"],
+                strategy_version=active_info["version"],
+                record_count=len(valid_records),
+                ai_calls=0,
+                quality_score=val_metrics.get("qualityScore", 0.0),
+                total_ms=total_ms,
+                stage_durations=timer.stage_durations,
+                warnings=val_warnings,
+            )
             return {
                 "sourceUrl": source_url,
                 "pageType": page_type,
                 "success": True,
                 "records": valid_records,
-                "metadata": {
-                    "recordCount": len(valid_records),
-                    "extractionMethod": "saved_strategy",
-                    "validationStatus": "passed",
-                    "strategySource": "saved",
-                    "aiCalls": 0,
-                    "fingerprint": fingerprint,
-                    "metrics": val_metrics,
-                    "warnings": val_warnings,
-                },
+                "metadata": result_meta,
             }
         else:
             recovery_status = "saved_strategy_revalidation_failed"
-            await strategy_repository.mark_strategy_failed(
-                hostname=source_url,
-                page_type=page_type,
-                fingerprint=fingerprint,
-            )
+
+    timer.end_stage()
 
     if not gemini_client.is_available():
+        timer.end_stage()
+        total_ms = timer.total_duration_ms()
         det_result["metadata"]["warnings"].append(
             "Gemini API key not configured; AI strategy learning unavailable"
         )
+        det_result["metadata"]["requestId"] = req_id
+        det_result["metadata"]["executionTimeMs"] = total_ms
+        det_result["metadata"]["stageDurations"] = timer.stage_durations
+        metrics_collector.record_extraction(
+            strategy_source="deterministic",
+            success=False,
+            ai_calls=0,
+            duration_ms=total_ms,
+        )
         return det_result
 
+    timer.start_stage("ai_learning")
     learned_strategy, valid_records, ai_metrics, ai_warnings = await learn_and_validate_strategy(
         html=html,
         source_url=source_url,
         page_type=page_type,
         max_attempts=settings.max_ai_attempts_per_extraction,
     )
+    timer.end_stage()
+    total_ms = timer.total_duration_ms()
 
     ai_calls = ai_metrics.get("aiCalls", 1)
 
     if learned_strategy and len(valid_records) >= 2:
-        await strategy_repository.save_strategy(
+        new_version = await strategy_repository.save_version(
             hostname=source_url,
             page_type=page_type,
             fingerprint=fingerprint,
             strategy=learned_strategy,
             validation_metrics=ai_metrics,
             validation_status="passed",
+            update_source="ai_learned",
+            change_reason="AI strategy learned and validated",
         )
+        strat_id = generate_strategy_id(source_url, page_type)
+
+        metrics_collector.record_extraction(
+            strategy_source="ai_learned",
+            success=True,
+            ai_calls=ai_calls,
+            duration_ms=total_ms,
+        )
+        log_extraction_event(
+            request_id=req_id,
+            hostname=source_url,
+            page_type=page_type,
+            strategy_source="ai_learned",
+            strategy_id=strat_id,
+            strategy_version=new_version,
+            record_count=len(valid_records),
+            ai_calls=ai_calls,
+            quality_score=ai_metrics.get("qualityScore", 0.0),
+            total_ms=total_ms,
+            stage_durations=timer.stage_durations,
+            warnings=ai_warnings,
+        )
+
         return {
             "sourceUrl": source_url,
             "pageType": page_type,
@@ -177,12 +290,38 @@ async def _run_full_extraction_workflow(
                 "validationStatus": "passed",
                 "strategySource": "ai_learned",
                 "aiCalls": ai_calls,
+                "strategyId": strat_id,
+                "strategyVersion": new_version,
+                "qualityScore": ai_metrics.get("qualityScore", 0.0),
                 "fingerprint": fingerprint,
                 "metrics": ai_metrics,
                 "recoveryStatus": recovery_status,
                 "warnings": ai_warnings,
+                "requestId": req_id,
+                "executionTimeMs": total_ms,
+                "stageDurations": timer.stage_durations,
             },
         }
+
+    metrics_collector.record_extraction(
+        strategy_source="ai_learned",
+        success=False,
+        ai_calls=ai_calls,
+        duration_ms=total_ms,
+    )
+    log_extraction_event(
+        request_id=req_id,
+        hostname=source_url,
+        page_type=page_type,
+        strategy_source="ai_learned",
+        record_count=0,
+        ai_calls=ai_calls,
+        quality_score=0.0,
+        total_ms=total_ms,
+        stage_durations=timer.stage_durations,
+        warnings=ai_warnings or ["AI strategy learning did not yield valid records"],
+        error="Strategy learning failed or yielded insufficient records",
+    )
 
     return {
         "sourceUrl": source_url,
@@ -195,10 +334,14 @@ async def _run_full_extraction_workflow(
             "validationStatus": "failed",
             "strategySource": "ai_learned",
             "aiCalls": ai_calls,
+            "qualityScore": 0.0,
             "fingerprint": fingerprint,
             "metrics": ai_metrics,
             "recoveryStatus": recovery_status,
             "warnings": ai_warnings or ["AI strategy learning did not yield valid records"],
+            "requestId": req_id,
+            "executionTimeMs": total_ms,
+            "stageDurations": timer.stage_durations,
         },
     }
 
@@ -208,9 +351,47 @@ def run_extraction_pipeline(
     source_url: str,
     requested_page_type: str = "auto",
     enable_learning: bool = True,
+    request_id: Optional[str] = None,
 ) -> AwaitableExtractionResult:
-    det_result, _ = run_deterministic_extraction(html, source_url, requested_page_type)
-    if det_result["success"] or not enable_learning:
+    req_id = request_id or generate_request_id()
+    timer = StageTimer()
+    timer.start_stage("deterministic")
+    det_result, page_type = run_deterministic_extraction(html, source_url, requested_page_type)
+    timer.end_stage()
+    total_ms = timer.total_duration_ms()
+
+    det_result["metadata"]["requestId"] = req_id
+    det_result["metadata"]["executionTimeMs"] = total_ms
+    det_result["metadata"]["stageDurations"] = timer.stage_durations
+
+    if det_result["success"]:
+        metrics_collector.record_extraction(
+            strategy_source="deterministic",
+            success=True,
+            ai_calls=0,
+            duration_ms=total_ms,
+        )
+        log_extraction_event(
+            request_id=req_id,
+            hostname=source_url,
+            page_type=page_type,
+            strategy_source="deterministic",
+            record_count=det_result["metadata"]["recordCount"],
+            ai_calls=0,
+            quality_score=det_result["metadata"].get("qualityScore", 0.0),
+            total_ms=total_ms,
+            stage_durations=timer.stage_durations,
+            warnings=det_result["metadata"]["warnings"],
+        )
+        return AwaitableExtractionResult(det_result)
+
+    if not enable_learning:
+        metrics_collector.record_extraction(
+            strategy_source="deterministic",
+            success=False,
+            ai_calls=0,
+            duration_ms=total_ms,
+        )
         return AwaitableExtractionResult(det_result)
 
     def _coro_factory():
@@ -219,6 +400,7 @@ def run_extraction_pipeline(
             source_url=source_url,
             requested_page_type=requested_page_type,
             enable_learning=enable_learning,
+            request_id=req_id,
         )
 
     return AwaitableExtractionResult(det_result, coro_func=_coro_factory)

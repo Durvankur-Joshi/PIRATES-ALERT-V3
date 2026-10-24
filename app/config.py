@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: int = 30
     max_ai_attempts_per_extraction: int = 2
     strategy_db_path: str = "strategies.db"
+    chrome_extension_origin: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

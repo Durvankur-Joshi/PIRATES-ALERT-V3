@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "PIRATES ALERT",
+  "version": "3.0.0",
+  "description": "Deterministic and Gemini-assisted web listing extractor with strategy versioning",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PIRATES ALERT Extraction",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ]
+}

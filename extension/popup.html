@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PIRATES ALERT</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand-group">
+        <img src="icons/icon48.png" alt="PIRATES ALERT logo" class="brand-icon">
+        <div class="brand-text">
+          <h1 class="brand-title">PIRATES ALERT</h1>
+          <span class="brand-subtitle">Listing Extractor V3</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div id="connection-pill" class="status-pill status-checking" title="Backend connection status">
+          <span class="status-dot"></span>
+          <span id="connection-text" class="status-label">Checking...</span>
+        </div>
+        <button id="refresh-conn-btn" class="icon-button" title="Check backend connection" aria-label="Refresh connection">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l6.73-6.73"/>
+          </svg>
+        </button>
+        <button id="toggle-settings-btn" class="icon-button" title="Configure Backend API URL" aria-label="Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Collapsible Settings Panel -->
+    <section id="settings-panel" class="settings-drawer hidden">
+      <div class="settings-row">
+        <label for="backend-url-input" class="form-label">Backend API Base URL</label>
+        <div class="input-action-group">
+          <input type="url" id="backend-url-input" class="text-input" placeholder="http://127.0.0.1:8000" spellcheck="false">
+          <button id="save-settings-btn" class="btn btn-secondary">Save</button>
+        </div>
+        <p class="form-caption">Ensure the local FastAPI server is listening on this address.</p>
+      </div>
+    </section>
+
+    <!-- Disconnected Alert Banner -->
+    <div id="connection-alert" class="alert-banner alert-warning hidden" role="alert">
+      <div class="alert-content">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-message">
+          <strong>Cannot connect to local backend.</strong>
+          <span id="connection-alert-detail">Please start the FastAPI server on 127.0.0.1:8000.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Extraction Input Section -->
+    <main class="main-content">
+      <section class="extraction-card">
+        <form id="extraction-form" onsubmit="return false;">
+          <div class="form-group">
+            <div class="label-row">
+              <label for="target-url" class="form-label">Listing / Search Page URL</label>
+              <button type="button" id="use-active-tab-btn" class="link-button" title="Grab current tab URL">Active Tab</button>
+            </div>
+            <input type="url" id="target-url" class="text-input" placeholder="https://example.com/products" required spellcheck="false" autocomplete="off">
+            <div id="url-scheme-warning" class="form-caption warning-text hidden">
+              Cannot extract browser-internal URLs. Please enter a public HTTP/HTTPS URL.
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="page-type" class="form-label">Page Classification</label>
+              <select id="page-type" class="select-input">
+                <option value="auto" selected>Auto-detect</option>
+                <option value="ecommerce">E-commerce Catalog</option>
+                <option value="generic_listing">Generic Listing / Jobs / Directory</option>
+              </select>
+            </div>
+            <div class="form-group form-actions-align">
+              <button type="submit" id="extract-btn" class="btn btn-primary">
+                <span class="btn-spinner hidden" id="extract-spinner"></span>
+                <span id="extract-btn-text">Extract</span>
+              </button>
+            </div>
+          </div>
+          <p class="architecture-notice">
+            <span>ℹ️</span> Rendered DOM loading &amp; extraction are executed by the backend's Python Playwright Chromium browser.
+          </p>
+        </form>
+      </section>
+
+      <!-- Extraction Progress Bar / State -->
+      <section id="progress-section" class="progress-container hidden" aria-live="polite">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill"></div>
+        </div>
+        <div class="progress-status-row">
+          <span id="progress-status-text" class="progress-status-text">Rendering page in headless browser...</span>
+          <button id="cancel-extract-btn" class="link-button text-danger">Cancel</button>
+        </div>
+      </section>
+
+      <!-- Error Display Card -->
+      <section id="error-section" class="alert-banner alert-danger hidden" role="alert">
+        <div class="alert-content">
+          <span class="alert-icon">✕</span>
+          <div class="alert-message">
+            <strong id="error-title">Extraction Failed</strong>
+            <p id="error-detail" class="error-detail-text"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Extraction Results Section -->
+      <section id="results-section" class="results-container hidden">
+        <!-- Result Bar -->
+        <div class="results-header">
+          <div class="results-title-group">
+            <h2 class="section-title">Extracted Records</h2>
+            <span id="record-count-badge" class="badge badge-success">0 records</span>
+          </div>
+          <div class="results-actions">
+            <button id="copy-json-btn" class="btn btn-sm btn-secondary" title="Copy normalized JSON to clipboard">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy JSON
+            </button>
+            <button id="download-json-btn" class="btn btn-sm btn-secondary" title="Download response JSON file">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Download
+            </button>
+            <button id="open-source-btn" class="btn btn-sm btn-secondary" title="Open source URL in new tab">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Extraction Diagnostics Panel -->
+        <div id="diagnostics-panel" class="diagnostics-card">
+          <div class="diag-grid">
+            <div class="diag-item">
+              <span class="diag-label">Strategy Source</span>
+              <span id="diag-strategy-source" class="diag-val">-</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Method</span>
+              <span id="diag-method" class="diag-val">-</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">AI Calls</span>
+              <span id="diag-ai-calls" class="diag-val diag-badge-zero">0 calls</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Quality Score</span>
+              <span id="diag-quality-score" class="diag-val">-</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Strategy ID &amp; Ver</span>
+              <span id="diag-strategy-id" class="diag-val" title="">-</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Execution Time</span>
+              <span id="diag-execution-time" class="diag-val">-</span>
+            </div>
+          </div>
+          <div id="diag-warnings-container" class="diag-warnings hidden"></div>
+        </div>
+
+        <!-- Records List -->
+        <div id="records-list" class="records-list"></div>
+
+        <!-- Empty Results State -->
+        <div id="empty-state" class="empty-state hidden">
+          <span class="empty-icon">🔍</span>
+          <p class="empty-title">No Listing Records Discovered</p>
+          <p class="empty-desc">The page loaded successfully, but no structured cards or listing records met the validation criteria.</p>
+        </div>
+      </section>
+
+      <!-- Collapsible Strategy Management Panel -->
+      <section class="accordion-section">
+        <button id="toggle-strategies-btn" class="accordion-header" type="button" aria-expanded="false">
+          <span class="accordion-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+            Learned Rules &amp; Strategy Rollback
+          </span>
+          <span class="accordion-badge">Local Admin</span>
+        </button>
+        <div id="strategies-panel" class="accordion-content hidden">
+          <div class="strategy-search-row">
+            <input type="text" id="strategy-host-input" class="text-input" placeholder="e.g. artisan-shop.org" spellcheck="false">
+            <button id="fetch-strategies-btn" class="btn btn-sm btn-secondary">Fetch Rules</button>
+          </div>
+          <div id="strategy-versions-list" class="strategy-versions-list">
+            <p class="caption-muted">Enter a hostname and click "Fetch Rules" to inspect persisted strategy versions.</p>
+          </div>
+
+          <!-- Rollback Prompt Dialog / Form -->
+          <div id="rollback-dialog" class="rollback-box hidden">
+            <h4 class="rollback-title">Rollback Active Strategy</h4>
+            <p id="rollback-prompt-text" class="rollback-desc">Roll back to Version #1?</p>
+            <div class="form-group">
+              <label for="rollback-reason-input" class="form-label">Rollback Reason (min 3 chars)</label>
+              <input type="text" id="rollback-reason-input" class="text-input" placeholder="e.g. V2 broke pagination">
+            </div>
+            <div class="rollback-actions">
+              <button id="confirm-rollback-btn" class="btn btn-sm btn-primary">Confirm Rollback</button>
+              <button id="cancel-rollback-btn" class="btn btn-sm btn-secondary">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

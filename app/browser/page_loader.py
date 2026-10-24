@@ -102,6 +102,8 @@ async def load_rendered_page(
     )
 
     page: Page = await context.new_page()
+    context.on("page", lambda p: asyncio.create_task(p.close()))
+    page.on("popup", lambda p: asyncio.create_task(p.close()))
 
     try:
         await page.route("**/*", route_interceptor)

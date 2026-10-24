@@ -135,39 +135,38 @@ def execute_strategy(
     return records
 
 
+from app.extraction.quality import evaluate_extraction_quality
+
+
 def validate_strategy_execution(
     records: list[dict[str, Any]],
     page_type: str,
 ) -> tuple[bool, dict[str, Any], list[dict[str, Any]], list[str]]:
-    warnings: list[str] = []
     total_candidates = len(records)
-
     if total_candidates == 0:
-        return False, {"recordCount": 0, "error": "Strategy matched zero records"}, [], ["Selector matched 0 elements"]
+        return (
+            False,
+            {"recordCount": 0, "qualityScore": 0.0, "error": "Strategy matched zero records"},
+            [],
+            ["Selector matched 0 elements"],
+        )
 
-    deduped = deduplicate_records(records)
-    is_valid, val_status, valid_records, val_warnings = validate_extracted_records(deduped, page_type)
-    warnings.extend(val_warnings)
-
-    valid_count = len(valid_records)
-    duplicate_ratio = (total_candidates - len(deduped)) / total_candidates if total_candidates > 0 else 0.0
+    report, valid_records = evaluate_extraction_quality(
+        records, page_type, total_candidates=total_candidates
+    )
 
     metrics: dict[str, Any] = {
-        "candidateCount": total_candidates,
-        "recordCount": valid_count,
-        "duplicateRatio": round(duplicate_ratio, 2),
-        "validationStatus": val_status,
+        "candidateCount": report.candidate_count,
+        "recordCount": report.record_count,
+        "duplicateRatio": report.duplicate_rate,
+        "qualityScore": report.quality_score,
+        "validRate": report.valid_rate,
+        "contaminationRate": report.contamination_rate,
+        "fieldCoverage": report.field_coverage,
+        "validationStatus": "passed" if report.is_acceptable else "failed",
     }
 
-    if not is_valid or valid_count < 2:
-        warnings.append(f"Strategy yielded insufficient valid records ({valid_count})")
-        return False, metrics, [], warnings
-
-    if duplicate_ratio > 0.6:
-        warnings.append(f"Excessive duplicate ratio in strategy results: {duplicate_ratio:.2f}")
-        return False, metrics, [], warnings
-
-    return True, metrics, valid_records, warnings
+    return report.is_acceptable, metrics, valid_records, report.warnings
 
 
 async def learn_and_validate_strategy(
