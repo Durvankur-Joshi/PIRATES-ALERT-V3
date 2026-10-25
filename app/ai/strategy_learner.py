@@ -219,7 +219,10 @@ async def learn_and_validate_strategy(
         if strategy is None:
             err = call_metrics.get("error", "AI strategy generation failed")
             collected_warnings.append(f"Attempt {attempt}: {err}")
-            break
+            if "not configured" in err.lower() or "timed out" in err.lower():
+                break
+            validation_feedback = f"Strategy proposal failed validation: {err}"
+            continue
 
         records = execute_strategy(html, source_url, strategy)
         is_valid, val_metrics, valid_records, val_warnings = validate_strategy_execution(records, page_type)

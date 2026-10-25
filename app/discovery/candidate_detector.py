@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup, Tag
 from app.extraction.normalizer import (
     clean_text,
     extract_price_and_currency,
+    is_likely_phone_number,
     normalize_url,
     parse_rating,
     parse_review_count,
@@ -289,7 +290,7 @@ def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None
             rating = parse_rating(str(rating_elem.get("aria-label")))
 
     if rating is None:
-        for el in card.select("[class*='rating'], [class*='star']"):
+        for el in card.select("[class*='rating'], [class*='star'], [class*='score'], [class*='rate'], [itemprop='ratingValue']"):
             text = clean_text(el.get_text())
             if text:
                 r = parse_rating(text)
@@ -305,7 +306,7 @@ def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None
         reviews = parse_review_count(text)
 
     if reviews is None:
-        for el in card.select("span.s-underline-text, [aria-label*='ratings'], [aria-label*='reviews']"):
+        for el in card.select("span.s-underline-text, [aria-label*='ratings'], [aria-label*='reviews'], [itemprop='reviewCount'], [itemprop='ratingCount']"):
             label = el.get("aria-label")
             text = str(label) if label else el.get_text()
             rc = parse_review_count(text)
@@ -314,7 +315,7 @@ def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None
                 break
 
     if reviews is None:
-        for el in card.select("[class*='review'], [class*='reviews'], [class*='count']"):
+        for el in card.select("[class*='review'], [class*='reviews'], [class*='count'], [class*='votes']"):
             rc = parse_review_count(el.get_text())
             if rc is not None:
                 reviews = rc
@@ -359,21 +360,67 @@ def extract_card_extra(card: Tag, page_type: str) -> dict[str, Any]:
                 break
 
     elif page_type == "generic_listing":
-        for el in card.find_all(["span", "div", "p"]):
-            classes = " ".join(el.get("class", []))
+        # 1. Phone number discovery
+        tel_link = card.find("a", href=lambda h: bool(h and h.startswith("tel:")))
+        if tel_link and tel_link.get("href"):
+            raw_tel = tel_link["href"].replace("tel:", "").strip()
+            if raw_tel and len(raw_tel) <= 40:
+                extra["phone"] = raw_tel
+
+        if "phone" not in extra:
+            for el in card.find_all(attrs={"data-phone": True}):
+                val = str(el["data-phone"]).strip()
+                if val and len(val) <= 40:
+                    extra["phone"] = val
+                    break
+
+        # 2. Address tag or itemprop address
+        addr_tag = card.find("address") or card.select_one("[itemprop='address']")
+        if addr_tag:
+            addr_text = clean_text(addr_tag.get_text())
+            if addr_text and len(addr_text) <= 150:
+                extra["address"] = addr_text
+                extra["location"] = addr_text
+
+        # 3. Span, div, p, a classes and text markers
+        for el in card.find_all(["span", "div", "p", "a"]):
+            classes = " ".join(el.get("class", [])).lower()
             text = clean_text(el.get_text())
-            if not text or len(text) > 80:
+            if not text or len(text) > 120:
                 continue
 
-            if "company" in classes or "employer" in classes or "author" in classes:
-                if "company" not in extra:
+            # Phone in text or class
+            if "phone" not in extra:
+                if any(k in classes for k in ("phone", "contact", "mobile", "call")):
+                    if is_likely_phone_number(text):
+                        extra["phone"] = text
+
+            # Company / Provider
+            if any(k in classes for k in ("company", "employer", "provider", "business-name", "author")):
+                if "company" not in extra and len(text) <= 80 and not is_boilerplate_title(text):
                     extra["company"] = text
-            elif "location" in classes or "city" in classes or "address" in classes:
-                if "location" not in extra:
+
+            # Location / Locality / Address
+            if any(k in classes for k in ("locality", "address", "location", "city", "area", "street")):
+                if "location" not in extra and len(text) <= 100:
                     extra["location"] = text
-            elif "category" in classes or "badge" in classes or "tag" in classes:
-                if "category" not in extra:
+                    if "address" not in extra:
+                        extra["address"] = text
+
+            # Category / Service / Specialty
+            if any(k in classes for k in ("category", "service", "specialty", "spec", "tag", "chip", "skill")):
+                if "category" not in extra and len(text) <= 80:
                     extra["category"] = text
+
+            # Experience / Years in business
+            if re.search(r"\b(?:\d+\+?\s*years?(?:\s+in\s+business)?|serving\s+since\s+\d{4}|established\s+in\s+\d{4})\b", text, re.IGNORECASE):
+                if "experience" not in extra:
+                    extra["experience"] = text
+
+            # Verified badge
+            if re.search(r"\b(?:verified|certified|top\s+rated|authorized)\b", text, re.IGNORECASE) and len(text) <= 30:
+                if "badge" not in extra:
+                    extra["badge"] = text
 
     return extra
 

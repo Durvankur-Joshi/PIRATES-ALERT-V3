@@ -761,3 +761,238 @@ async def test_api_key_redacted_in_gemini_error_metrics():
     assert "secret-gemini-key-12345" not in str(metrics)
     assert "[REDACTED]" in metrics.get("error", "")
 
+
+# -------------------------------------------------------------------------
+# 9. Phase 8 Hardening Regression Tests
+# -------------------------------------------------------------------------
+
+def test_legitimate_price_with_percentage_spec_not_flagged_as_suspicious():
+    # "50% Cotton" is fabric composition, NOT a discount percentage
+    record = {
+        "title": "50% Cotton 50% Linen Summer Shirt",
+        "url": "https://example.com/shirt",
+        "sellingPrice": 50.0,
+        "mrp": 99.0,
+        "currency": "INR",
+    }
+    is_susp, reason = is_suspicious_price(record)
+    assert is_susp is False
+    assert reason is None or reason == ""
+
+
+def test_discount_percentage_matching_price_is_flagged():
+    # "50% off" is a discount percentage and colliding with price 50.0
+    record = {
+        "title": "Summer Shirt - 50% off on all sizes",
+        "url": "https://example.com/shirt",
+        "sellingPrice": 50.0,
+        "mrp": 1500.0,
+        "currency": "INR",
+    }
+    is_susp, reason = is_suspicious_price(record)
+    assert is_susp is True
+    assert "discount percentage" in reason
+
+
+def test_generic_listing_candidate_detection_extracts_directory_fields():
+    from app.discovery.candidate_detector import detect_candidate_records
+
+    html = """
+    <html>
+    <body>
+      <div class="directory-list">
+        <div class="card listing-item">
+          <h3 class="biz-name"><a href="/chennai/apex-pest-control">Apex Pest Control Services</a></h3>
+          <img src="https://images.sulekha.com/logos/apex.jpg" alt="Apex Logo">
+          <div class="location-area">T Nagar, Chennai</div>
+          <div class="service-category">Pest Control & Termite Management</div>
+          <a class="phone-link" href="tel:+919876543210">+91 98765 43210</a>
+          <span class="user-score">4.8</span>
+          <span class="reviews-count">142 reviews</span>
+        </div>
+        <div class="card listing-item">
+          <h3 class="biz-name"><a href="/chennai/bharat-home-services">Bharat Home Deep Cleaning</a></h3>
+          <img src="https://images.sulekha.com/logos/bharat.jpg" alt="Bharat Logo">
+          <div class="location-area">Adyar, Chennai</div>
+          <div class="service-category">Home Cleaning & Sanitization</div>
+          <a class="phone-link" href="tel:+919812345678">+91 98123 45678</a>
+          <span class="user-score">4.6</span>
+          <span class="reviews-count">89 reviews</span>
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+    records = detect_candidate_records(html, "https://www.sulekha.com/chennai/services", "generic_listing")
+    assert len(records) >= 2
+    first = records[0]
+    assert first["title"] == "Apex Pest Control Services"
+    assert first["url"] == "https://www.sulekha.com/chennai/apex-pest-control"
+    assert first["imageUrl"] == "https://images.sulekha.com/logos/apex.jpg"
+    assert first["rating"] == 4.8
+    assert first["reviewCount"] == 142
+    assert "extra" in first
+    assert first["extra"].get("phone") == "+919876543210" or "98765" in str(first["extra"].get("phone"))
+    assert "T Nagar" in str(first["extra"].get("address")) or "Chennai" in str(first["extra"].get("address"))
+    assert "Pest Control" in str(first["extra"].get("category"))
+
+
+def test_generic_listing_missing_optional_fields_remain_null():
+    from app.discovery.candidate_detector import detect_candidate_records
+
+    html = """
+    <html>
+    <body>
+      <div class="directory-list">
+        <div class="card listing-item">
+          <h3 class="biz-name"><a href="/chennai/apex-pest-control">Apex Pest Control Services</a></h3>
+          <img src="https://images.sulekha.com/logos/apex.jpg" alt="Apex Logo">
+          <div class="location-area">T Nagar, Chennai</div>
+        </div>
+        <div class="card listing-item">
+          <h3 class="biz-name"><a href="/chennai/bharat-home-services">Bharat Home Deep Cleaning</a></h3>
+          <img src="https://images.sulekha.com/logos/bharat.jpg" alt="Bharat Logo">
+          <div class="location-area">Adyar, Chennai</div>
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+    records = detect_candidate_records(html, "https://www.sulekha.com/chennai/services", "generic_listing")
+    assert len(records) >= 2
+    first = records[0]
+    assert first["title"] == "Apex Pest Control Services"
+    # Optional fields not present in DOM must remain null / None
+    assert first["sellingPrice"] is None
+    assert first["mrp"] is None
+    assert first["currency"] is None
+    assert first["rating"] is None
+    assert first["reviewCount"] is None
+
+
+def test_fabb6_strategy_repair_and_field_aliases():
+    from app.ai.strategy_schemas import ExtractionStrategy
+
+    # Fabb6-style AI output using 'product_name' and 'link' instead of 'title' and 'url'
+    raw_ai_dict = {
+        "page_type": "ecommerce",
+        "record_item_selector": ".product-card",
+        "fields": {
+            "product_name": {"selector": "h2.title", "attribute": "text"},
+            "link": {"selector": "a.product-href", "attribute": "href"},
+            "price": {"selector": ".price-box", "attribute": "text"},
+            "img": {"selector": "img.main-img", "attribute": "src"},
+        },
+    }
+
+    strategy = ExtractionStrategy.model_validate(raw_ai_dict)
+    assert "title" in strategy.fields
+    assert strategy.fields["title"].selector == "h2.title"
+    assert "url" in strategy.fields
+    assert strategy.fields["url"].selector == "a.product-href"
+    assert "sellingPrice" in strategy.fields
+    assert "imageUrl" in strategy.fields
+
+
+def test_fabb6_missing_title_and_url_repaired_with_safe_defaults():
+    from app.ai.strategy_schemas import ExtractionStrategy
+
+    # AI omitted title and url rules entirely
+    raw_ai_dict = {
+        "page_type": "ecommerce",
+        "record_item_selector": ".product-card",
+        "fields": {
+            "sellingPrice": {"selector": ".price", "attribute": "text"},
+        },
+    }
+
+    strategy = ExtractionStrategy.model_validate(raw_ai_dict)
+    assert "title" in strategy.fields
+    assert "url" in strategy.fields
+    assert strategy.fields["title"].required is True
+    assert strategy.fields["url"].required is True
+
+
+def test_invalid_css_selector_rejected_by_strategy_validation():
+    from app.ai.strategy_schemas import ExtractionStrategy
+    from pydantic import ValidationError
+
+    # Malformed CSS selector syntax (unclosed bracket)
+    raw_ai_dict = {
+        "page_type": "ecommerce",
+        "record_item_selector": "div[class=",
+        "fields": {
+            "title": {"selector": "h2", "attribute": "text"},
+            "url": {"selector": "a", "attribute": "href"},
+        },
+    }
+
+    with pytest.raises(ValidationError, match="Invalid CSS selector syntax"):
+        ExtractionStrategy.model_validate(raw_ai_dict)
+
+
+def test_invalid_strategy_never_persisted_to_repository():
+    from app.ai.strategy_learner import validate_strategy_execution
+
+    # Records produced with missing titles
+    bad_records = [
+        {"title": None, "url": "https://example.com/p1"},
+        {"title": "", "url": "https://example.com/p2"},
+    ]
+    is_valid, metrics, valid_recs, warnings = validate_strategy_execution(bad_records, "ecommerce")
+    assert is_valid is False
+    assert len(valid_recs) == 0
+
+
+def test_http2_protocol_error_classified_and_mapped_to_502(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.browser.page_loader import ProtocolError
+
+    async def fake_load_page_protocol_err(url, timeout_ms=None):
+        raise ProtocolError("Protocol error (HTTP/2 or connection reset) while loading www.myntra.com: net::ERR_HTTP2_PROTOCOL_ERROR")
+
+    from app import main
+    monkeypatch.setattr(main, "load_rendered_page", fake_load_page_protocol_err)
+
+    client = TestClient(app)
+    response = client.post("/api/v1/extract", json={"url": "https://www.myntra.com/tshirts"})
+    assert response.status_code == 502
+    assert "Navigation protocol failure" in response.json()["detail"]
+    assert "ERR_HTTP2_PROTOCOL_ERROR" in response.json()["detail"]
+
+
+def test_duplicate_detection_does_not_merge_distinct_records():
+    from app.extraction.normalizer import deduplicate_records
+
+    records = [
+        {
+            "title": "Apple iPhone 15 (128 GB) - Black",
+            "url": "https://example.com/p/iphone-15-black",
+            "productId": "IPHONE15-BLK",
+            "sellingPrice": 69900.0,
+        },
+        {
+            "title": "Apple iPhone 15 (128 GB) - Blue",
+            "url": "https://example.com/p/iphone-15-blue",
+            "productId": "IPHONE15-BLU",
+            "sellingPrice": 69900.0,
+        },
+        {
+            "title": "Apple iPhone 15 (128 GB) - Black",
+            "url": "https://example.com/p/iphone-15-black",
+            "productId": "IPHONE15-BLK",
+            "sellingPrice": 69900.0,
+        },
+    ]
+
+    deduped = deduplicate_records(records)
+    # Distinct items (Black vs Blue) must NOT be merged
+    assert len(deduped) == 2
+    urls = [r["url"] for r in deduped]
+    assert "https://example.com/p/iphone-15-black" in urls
+    assert "https://example.com/p/iphone-15-blue" in urls
+
+

@@ -19,6 +19,7 @@ from app.browser.page_loader import (
     EmptyPageError,
     NavigationError,
     PageLoadTimeoutError,
+    ProtocolError,
     load_rendered_page,
 )
 from app.browser.playwright_manager import playwright_manager
@@ -159,6 +160,11 @@ async def extract_records(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(e),
+        )
+    except ProtocolError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Navigation protocol failure: {e}",
         )
     except NavigationError as e:
         raise HTTPException(

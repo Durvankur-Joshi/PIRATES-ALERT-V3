@@ -96,10 +96,19 @@ def validate_single_record(record: dict[str, Any], page_type: str) -> tuple[bool
     mrp = record.get("mrp")
     if mrp is not None and mrp <= 0:
         record["mrp"] = None
+        mrp = None
+
+    # Handle inverted selling price and MRP
+    if selling_price is not None and mrp is not None and selling_price > mrp:
+        record["sellingPrice"], record["mrp"] = mrp, selling_price
+        selling_price, mrp = mrp, selling_price
 
     rating = record.get("rating")
-    if rating is not None and not (0.0 <= rating <= 10.0):
-        record["rating"] = None
+    if rating is not None:
+        if not (0.0 <= rating <= 10.0):
+            record["rating"] = None
+        elif 5.0 < rating <= 10.0:
+            record["rating"] = round(rating / 2.0, 1)
 
     review_count = record.get("reviewCount") if "reviewCount" in record else record.get("review_count")
     if review_count is not None and review_count < 0:

@@ -76,8 +76,8 @@ def is_suspicious_price(record: dict[str, Any]) -> tuple[bool, str | None]:
     if re.search(rf"\bspf\s*{re.escape(str(int_price))}\b", combined_text):
         return True, f"Price {price} matches SPF specification"
 
-    # Percentage collision: price matches discount percentage (e.g. "80% off")
-    if re.search(rf"\b{re.escape(str(int_price))}\s*%\b", combined_text):
+    # Percentage collision: price matches discount percentage (e.g. "80% off", "50% discount")
+    if re.search(rf"\b{re.escape(str(int_price))}\s*%\s*(?:off|discount|cashback|savings?)\b", combined_text):
         return True, f"Price {price} matches discount percentage"
 
     return False, None
@@ -133,6 +133,13 @@ def inspect_listing_field_quality(records: list[dict[str, Any]], page_type: str)
 
         if valid_price_count == 0:
             warnings.append("Material field failure: No valid prices found for e-commerce listing")
+            return False, warnings
+
+    elif page_type == "generic_listing":
+        if brand_only_title_count / total >= 0.50:
+            warnings.append(
+                f"Material field failure: {brand_only_title_count / total:.0%} of generic records have brand-only or UI titles"
+            )
             return False, warnings
 
     return True, warnings
@@ -204,6 +211,9 @@ def evaluate_extraction_quality(
         images = sum(1 for r in valid_records if r.get("imageUrl") or r.get("image_url"))
         ratings = sum(1 for r in valid_records if r.get("rating") is not None)
         skus = sum(1 for r in valid_records if r.get("productId") or r.get("product_id"))
+        locations = sum(1 for r in valid_records if (r.get("extra") or {}).get("location") or (r.get("extra") or {}).get("address"))
+        categories = sum(1 for r in valid_records if (r.get("extra") or {}).get("category") or (r.get("extra") or {}).get("service"))
+        phones = sum(1 for r in valid_records if (r.get("extra") or {}).get("phone"))
 
         field_coverage["title"] = round(titles / valid_count, 2)
         field_coverage["url"] = round(urls / valid_count, 2)
@@ -211,6 +221,10 @@ def evaluate_extraction_quality(
         field_coverage["image"] = round(images / valid_count, 2)
         field_coverage["rating"] = round(ratings / valid_count, 2)
         field_coverage["productId"] = round(skus / valid_count, 2)
+        if page_type == "generic_listing":
+            field_coverage["location"] = round(locations / valid_count, 2)
+            field_coverage["category"] = round(categories / valid_count, 2)
+            field_coverage["phone"] = round(phones / valid_count, 2)
 
     # Assess title substantive quality
     descriptive_title_count = 0
@@ -239,7 +253,12 @@ def evaluate_extraction_quality(
             img_cov = field_coverage.get("image", 0.0)
             completeness_part = (price_cov * 0.06) + (img_cov * 0.04)
         else:
-            completeness_part = 0.10
+            img_cov = field_coverage.get("image", 0.0)
+            loc_cov = field_coverage.get("location", 0.0)
+            cat_cov = field_coverage.get("category", 0.0)
+            phone_cov = field_coverage.get("phone", 0.0)
+            rating_cov = field_coverage.get("rating", 0.0)
+            completeness_part = (img_cov * 0.03) + (loc_cov * 0.03) + (cat_cov * 0.02) + (rating_cov * 0.01) + (phone_cov * 0.01)
 
         raw_score = valid_part + count_part + uniqueness_part + title_quality_part + completeness_part
 

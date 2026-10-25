@@ -27,6 +27,19 @@ GENERIC_LISTING_TYPES = {
     "place",
     "localbusiness",
     "organization",
+    "service",
+    "professionalservice",
+    "homeandconstructionbusiness",
+    "automotivebusiness",
+    "store",
+    "foodestablishment",
+    "restaurant",
+    "healthandbeautybusiness",
+    "medicalbusiness",
+    "educationalorganization",
+    "financialservice",
+    "lodgingbusiness",
+    "travelagency",
     "event",
     "article",
     "newsarticle",
@@ -161,6 +174,34 @@ def extract_extra_attributes(node: dict[str, Any], node_type: str) -> dict[str, 
         if "floorSize" in node:
             extra["floorSize"] = str(node["floorSize"])
 
+    # Extract generic directory / local business attributes (phone, address, service)
+    if "telephone" in node or "phone" in node:
+        phone_val = str(node.get("telephone") or node.get("phone")).strip()
+        if phone_val and len(phone_val) <= 40:
+            extra["phone"] = phone_val
+
+    if "address" in node and "location" not in extra:
+        addr = node["address"]
+        if isinstance(addr, dict):
+            parts = [
+                str(addr.get(k)).strip()
+                for k in ("streetAddress", "addressLocality", "addressRegion", "postalCode")
+                if addr.get(k)
+            ]
+            if parts:
+                full_addr = ", ".join(parts)
+                extra["address"] = full_addr
+                extra["location"] = addr.get("addressLocality") or full_addr
+        elif isinstance(addr, str) and addr.strip():
+            extra["address"] = addr.strip()
+            extra["location"] = addr.strip()
+
+    if "serviceType" in node and "category" not in extra:
+        extra["category"] = str(node["serviceType"]).strip()
+
+    if "priceRange" in node:
+        extra["priceRange"] = str(node["priceRange"]).strip()
+
     return extra
 
 
@@ -175,7 +216,7 @@ def parse_schema_node(node: dict[str, Any], base_url: str) -> tuple[dict[str, An
 
     if any(t in ECOMMERCE_TYPES for t in types):
         detected_type = "ecommerce"
-    elif any(t in GENERIC_LISTING_TYPES for t in types):
+    elif any(t in GENERIC_LISTING_TYPES or "business" in t or "service" in t for t in types):
         detected_type = "generic_listing"
     else:
         return None, None

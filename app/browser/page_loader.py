@@ -1,5 +1,6 @@
 import asyncio
 from typing import Optional
+from urllib.parse import urlparse
 from playwright.async_api import BrowserContext, Page, Route, TimeoutError as PlaywrightTimeoutError
 from app.browser.playwright_manager import playwright_manager
 from app.config import settings
@@ -37,6 +38,10 @@ class NavigationError(RuntimeError):
 
 
 class PageLoadTimeoutError(NavigationError):
+    pass
+
+
+class ProtocolError(NavigationError):
     pass
 
 
@@ -159,19 +164,50 @@ async def load_rendered_page(
     try:
         await page.route("**/*", route_interceptor)
 
-        try:
-            response = await page.goto(
-                validated_url,
-                wait_until="domcontentloaded",
-                timeout=effective_timeout,
-            )
-        except PlaywrightTimeoutError as e:
-            raise PageLoadTimeoutError(f"Navigation timed out after {effective_timeout}ms") from e
-        except Exception as e:
-            raise NavigationError(f"Failed to load URL {validated_url}: {e}") from e
+        response = None
+        max_nav_attempts = 2  # 1 initial try + 1 bounded retry for transient protocol drops
+        last_error: Optional[Exception] = None
+
+        for nav_attempt in range(1, max_nav_attempts + 1):
+            try:
+                response = await page.goto(
+                    validated_url,
+                    wait_until="domcontentloaded",
+                    timeout=effective_timeout,
+                )
+                break
+            except PlaywrightTimeoutError as e:
+                raise PageLoadTimeoutError(f"Navigation timed out after {effective_timeout}ms") from e
+            except Exception as e:
+                last_error = e
+                err_msg = str(e)
+                is_protocol_error = any(
+                    token in err_msg
+                    for token in ("ERR_HTTP2_PROTOCOL_ERROR", "ERR_CONNECTION_RESET", "ERR_NETWORK_CHANGED")
+                )
+                if is_protocol_error and nav_attempt < max_nav_attempts:
+                    await asyncio.sleep(1.0)
+                    continue
+                if is_protocol_error:
+                    host = urlparse(validated_url).netloc
+                    raise ProtocolError(
+                        f"Protocol error (HTTP/2 or connection reset) while loading {host}: {err_msg}"
+                    ) from e
+                raise NavigationError(f"Failed to load URL {validated_url}: {e}") from e
 
         if response is None:
+            if last_error:
+                raise NavigationError(f"Failed to load URL {validated_url}: {last_error}") from last_error
             raise NavigationError(f"Empty HTTP response received for {validated_url}")
+
+        if response.status in (401, 403):
+            raise AccessRestrictedError(
+                f"Target server returned HTTP {response.status} ({urlparse(validated_url).netloc})"
+            )
+        if response.status == 429:
+            raise BotChallengeDetectedError(
+                f"Target server rate limited request with HTTP 429 ({urlparse(validated_url).netloc})"
+            )
 
         final_url = page.url
         try:
@@ -198,5 +234,11 @@ async def load_rendered_page(
         return rendered_html, final_url
 
     finally:
-        await page.close()
-        await context.close()
+        try:
+            await page.close()
+        except Exception:
+            pass
+        try:
+            await context.close()
+        except Exception:
+            pass
