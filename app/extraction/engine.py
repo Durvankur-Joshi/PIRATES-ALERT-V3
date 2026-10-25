@@ -6,13 +6,19 @@ from app.ai.strategy_learner import (
     learn_and_validate_strategy,
     validate_strategy_execution,
 )
+from app.ai.product_extractor import extract_products_with_ai
+from app.ai.strategy_schemas import ExtractionStrategy
 from app.config import settings
 from app.discovery.candidate_detector import detect_candidate_records
 from app.discovery.page_classifier import classify_page
 from app.discovery.structured_data import extract_from_structured_data
 from app.extraction.normalizer import deduplicate_records
-from app.extraction.quality import evaluate_extraction_quality
-from app.extraction.validator import validate_extracted_records
+from app.extraction.quality import (
+    evaluate_extraction_quality,
+    inspect_listing_field_quality,
+    is_suspicious_price,
+)
+from app.extraction.validator import is_valid_url_string, validate_extracted_records
 from app.monitoring.observability import (
     StageTimer,
     generate_request_id,
@@ -38,6 +44,26 @@ class AwaitableExtractionResult(dict):
         return _identity().__await__()
 
 
+def sanitize_safe_partial_records(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    safe_records: list[dict[str, Any]] = []
+    for r in raw_records:
+        title = str(r.get("title") or "").strip()
+        url = r.get("url")
+        if not title or not url or not is_valid_url_string(url):
+            continue
+        rec = dict(r)
+        is_susp, _ = is_suspicious_price(rec)
+        if is_susp:
+            rec["sellingPrice"] = None
+            rec["mrp"] = None
+            rec["currency"] = None
+        rating = rec.get("rating")
+        if rating is not None and not (0.0 <= rating <= 5.0):
+            rec["rating"] = None
+        safe_records.append(rec)
+    return deduplicate_records(safe_records)
+
+
 def run_deterministic_extraction(
     html: str,
     source_url: str,
@@ -45,6 +71,8 @@ def run_deterministic_extraction(
 ) -> tuple[dict[str, Any], str]:
     sd_records, sd_type = extract_from_structured_data(html, source_url)
     page_type = classify_page(html, structured_data_type=sd_type, requested_type=requested_page_type)
+
+    partial_candidates: list[dict[str, Any]] = []
 
     if sd_records:
         report, valid_records = evaluate_extraction_quality(
@@ -67,6 +95,7 @@ def run_deterministic_extraction(
                     "warnings": report.warnings,
                 },
             }, page_type
+        partial_candidates = sanitize_safe_partial_records(sd_records)
 
     dom_records = detect_candidate_records(html, source_url, page_type)
     if dom_records:
@@ -90,21 +119,25 @@ def run_deterministic_extraction(
                     "warnings": report.warnings,
                 },
             }, page_type
+        partial_candidates = sanitize_safe_partial_records(dom_records)
+
+    quality_warnings = report.warnings if "report" in locals() else ["No credible listing records found on the page deterministically"]
 
     return {
         "sourceUrl": source_url,
         "pageType": page_type,
         "success": False,
-        "records": [],
+        "records": partial_candidates,
         "metadata": {
-            "recordCount": 0,
+            "recordCount": len(partial_candidates),
             "extractionMethod": "none",
             "validationStatus": "failed",
             "strategySource": "deterministic",
             "aiCalls": 0,
             "qualityScore": 0.0,
+            "partialRecords": partial_candidates,
             "metrics": {},
-            "warnings": ["No credible listing records found on the page deterministically"],
+            "warnings": quality_warnings,
         },
     }, page_type
 
@@ -164,8 +197,9 @@ async def _run_full_extraction_workflow(
         is_valid, val_metrics, valid_records, val_warnings = validate_strategy_execution(
             records, page_type
         )
+        is_field_ok, field_warnings = inspect_listing_field_quality(valid_records, page_type)
 
-        if is_valid and len(valid_records) >= 2:
+        if is_valid and is_field_ok and len(valid_records) >= 2:
             timer.end_stage()
             total_ms = timer.total_duration_ms()
             result_meta = {
@@ -179,7 +213,7 @@ async def _run_full_extraction_workflow(
                 "qualityScore": val_metrics.get("qualityScore", 0.0),
                 "fingerprint": fingerprint,
                 "metrics": val_metrics,
-                "warnings": val_warnings,
+                "warnings": val_warnings + field_warnings,
                 "requestId": req_id,
                 "executionTimeMs": total_ms,
                 "stageDurations": timer.stage_durations,
@@ -202,7 +236,7 @@ async def _run_full_extraction_workflow(
                 quality_score=val_metrics.get("qualityScore", 0.0),
                 total_ms=total_ms,
                 stage_durations=timer.stage_durations,
-                warnings=val_warnings,
+                warnings=val_warnings + field_warnings,
             )
             return {
                 "sourceUrl": source_url,
@@ -220,7 +254,7 @@ async def _run_full_extraction_workflow(
         timer.end_stage()
         total_ms = timer.total_duration_ms()
         det_result["metadata"]["warnings"].append(
-            "Gemini API key not configured; AI strategy learning unavailable"
+            "Gemini API key not configured; AI extraction fallback unavailable"
         )
         det_result["metadata"]["requestId"] = req_id
         det_result["metadata"]["executionTimeMs"] = total_ms
@@ -233,6 +267,120 @@ async def _run_full_extraction_workflow(
         )
         return det_result
 
+    has_field_quality_failure = bool(
+        det_result["metadata"].get("partialRecords")
+        or any(
+            "field failure" in w.lower()
+            or "suspicious" in w.lower()
+            or "field quality" in w.lower()
+            for w in det_result["metadata"].get("warnings", [])
+        )
+    )
+
+    if has_field_quality_failure:
+        # Candidate cards were detected by deterministic extractor, but failed field-level quality checks.
+        # Trigger the controlled AI-assisted product extraction fallback.
+        timer.start_stage("ai_fallback")
+        ai_records, ai_metrics, ai_warnings = await extract_products_with_ai(
+            html=html,
+            source_url=source_url,
+            page_type=page_type,
+        )
+        timer.end_stage()
+        total_ms = timer.total_duration_ms()
+
+        if ai_records and len(ai_records) >= 2:
+            metrics_collector.record_extraction(
+                strategy_source="ai_fallback",
+                success=True,
+                ai_calls=1,
+                duration_ms=total_ms,
+            )
+            log_extraction_event(
+                request_id=req_id,
+                hostname=source_url,
+                page_type=page_type,
+                strategy_source="ai_fallback",
+                record_count=len(ai_records),
+                ai_calls=1,
+                quality_score=ai_metrics.get("qualityScore", 0.85),
+                total_ms=total_ms,
+                stage_durations=timer.stage_durations,
+                warnings=ai_warnings,
+            )
+
+            return {
+                "sourceUrl": source_url,
+                "pageType": page_type,
+                "success": True,
+                "records": ai_records,
+                "metadata": {
+                    "recordCount": len(ai_records),
+                    "extractionMethod": "gemini_fallback",
+                    "validationStatus": "passed",
+                    "strategySource": "ai_fallback",
+                    "aiCalls": 1,
+                    "qualityScore": ai_metrics.get("qualityScore", 0.85),
+                    "fingerprint": fingerprint,
+                    "metrics": ai_metrics,
+                    "recoveryStatus": recovery_status,
+                    "warnings": ai_warnings,
+                    "requestId": req_id,
+                    "executionTimeMs": total_ms,
+                    "stageDurations": timer.stage_durations,
+                },
+            }
+
+        # AI Fallback failed or produced ungrounded records:
+        # Return best safe partial deterministic result without fabricated data
+        metrics_collector.record_extraction(
+            strategy_source="ai_fallback",
+            success=False,
+            ai_calls=1,
+            duration_ms=total_ms,
+        )
+
+        safe_partial = det_result["metadata"].get("partialRecords", [])
+        merged_warnings = list(det_result["metadata"].get("warnings", []))
+        merged_warnings.extend(ai_warnings or ["AI fallback extraction did not yield valid grounded records"])
+
+        log_extraction_event(
+            request_id=req_id,
+            hostname=source_url,
+            page_type=page_type,
+            strategy_source="ai_fallback",
+            record_count=len(safe_partial),
+            ai_calls=1,
+            quality_score=0.0,
+            total_ms=total_ms,
+            stage_durations=timer.stage_durations,
+            warnings=merged_warnings,
+            error="AI fallback extraction failed",
+        )
+
+        return {
+            "sourceUrl": source_url,
+            "pageType": page_type,
+            "success": False,
+            "records": safe_partial,
+            "metadata": {
+                "recordCount": len(safe_partial),
+                "extractionMethod": "partial_deterministic" if safe_partial else "none",
+                "validationStatus": "failed",
+                "strategySource": "ai_fallback_partial" if safe_partial else "ai_fallback",
+                "aiCalls": 1,
+                "qualityScore": 0.0,
+                "fingerprint": fingerprint,
+                "metrics": ai_metrics,
+                "recoveryStatus": "ai_fallback_failed",
+                "warnings": merged_warnings,
+                "requestId": req_id,
+                "executionTimeMs": total_ms,
+                "stageDurations": timer.stage_durations,
+            },
+        }
+
+    # If no candidate cards were found deterministically, use the tested strategy-learning pipeline
     timer.start_stage("ai_learning")
     learned_strategy, valid_records, ai_metrics, ai_warnings = await learn_and_validate_strategy(
         html=html,
@@ -242,7 +390,6 @@ async def _run_full_extraction_workflow(
     )
     timer.end_stage()
     total_ms = timer.total_duration_ms()
-
     ai_calls = ai_metrics.get("aiCalls", 1)
 
     if learned_strategy and len(valid_records) >= 2:

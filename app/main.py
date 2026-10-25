@@ -14,6 +14,7 @@ from app.api.schemas import (
     StrategyListResponse,
 )
 from app.browser.page_loader import (
+    AccessRestrictedError,
     BotChallengeDetectedError,
     EmptyPageError,
     NavigationError,
@@ -145,6 +146,11 @@ async def extract_records(
             detail=str(e),
         )
     except BotChallengeDetectedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e),
+        )
+    except AccessRestrictedError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),

@@ -48,10 +48,22 @@ class URLValidationError(ValueError):
     pass
 
 
+NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+NAT64_LOCAL_PREFIX = ipaddress.ip_network("64:ff9b:1::/48")
+
+
 def is_ip_address_forbidden(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     # Security requirement: Extract embedded IPv4 from IPv4-mapped IPv6 to prevent SSRF bypass
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
+
+    # Security requirement: For NAT64 translation addresses (RFC 6052 / RFC 8215),
+    # extract the embedded IPv4 address and validate it directly against SSRF rules.
+    # Standard Python ipaddress marks 64:ff9b::/96 as is_reserved=True.
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip in NAT64_WELL_KNOWN_PREFIX or ip in NAT64_LOCAL_PREFIX:
+            embedded_ipv4 = ipaddress.IPv4Address(ip.packed[-4:])
+            return is_ip_address_forbidden(embedded_ipv4)
 
     if (
         ip.is_private

@@ -70,46 +70,111 @@ def extract_image_from_card(card: Tag, base_url: str) -> str | None:
     return None
 
 
+NON_TITLE_PHRASES = {
+    "sponsored",
+    "ad",
+    "sponsored ad",
+    "sponsored product",
+    "featured",
+    "brand store",
+    "visit the store",
+    "brands related to your search",
+    "results",
+    "best seller",
+    "amazon's choice",
+    "deal of the day",
+}
+
+DISCARDED_TITLE_CLASSES = [
+    "a-badge-label",
+    "puis-sponsored-label-text",
+    "s-label-popover-hover",
+    "a-badge-text",
+    "s-sponsored-label-info-icon",
+]
+
+
+def _clean_heading_for_title(heading: Tag) -> str:
+    clone = BeautifulSoup(str(heading), "html.parser").find()
+    if not isinstance(clone, Tag):
+        return clean_text(heading.get_text())
+
+    for cls in DISCARDED_TITLE_CLASSES:
+        for noise in clone.find_all(True, class_=cls):
+            noise.decompose()
+
+    return clean_text(clone.get_text())
+
+
 def extract_title_and_url_from_card(card: Tag, base_url: str) -> tuple[str, str | None]:
+    candidates: list[tuple[int, int, str, str | None]] = []
+
+    # Priority 3: Amazon / standard e-commerce specific title container
+    for sel in (
+        "h2 a.a-link-normal span",
+        "h2 a.a-link-normal",
+        "h2.a-size-mini a",
+        "h2 a span",
+        "h2 a",
+        "[data-cy='title-recipe'] h2 a",
+        ".s-title-instructions-style h2 a",
+    ):
+        for el in card.select(sel):
+            anchor = el if el.name == "a" else (el.find("a") or el.find_parent("a"))
+            text = clean_text(el.get_text())
+            link = normalize_url(base_url, anchor.get("href")) if anchor and anchor.get("href") else None
+            if text and text.lower() not in NON_TITLE_PHRASES and not is_boilerplate_title(text):
+                candidates.append((3, len(text), text, link))
+
+    # Priority 2: Any heading tag with an anchor
     for heading_tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
         for heading in card.find_all(heading_tag):
-            text = clean_text(heading.get_text())
-            if text and not is_boilerplate_title(text):
-                anchor = heading.find("a") or heading.find_parent("a")
-                link = normalize_url(base_url, anchor.get("href")) if anchor and anchor.get("href") else None
-                if not link:
-                    first_link = card.find("a", href=True)
-                    link = normalize_url(base_url, first_link.get("href")) if first_link else None
-                return text, link
+            text = _clean_heading_for_title(heading)
+            if not text or text.lower() in NON_TITLE_PHRASES or is_boilerplate_title(text):
+                continue
+            anchor = heading.find("a") or heading.find_parent("a")
+            link = normalize_url(base_url, anchor.get("href")) if anchor and anchor.get("href") else None
+            if anchor and link:
+                candidates.append((2, len(text), text, link))
+            else:
+                candidates.append((1, len(text), text, None))
 
-    anchors = card.find_all("a", href=True)
-    best_text = ""
-    best_link: str | None = None
+    # Priority 0: Descriptive anchor text
+    if not candidates:
+        for a in card.find_all("a", href=True):
+            text = clean_text(a.get_text())
+            link = normalize_url(base_url, a.get("href"))
+            if text and len(text) >= 10 and text.lower() not in NON_TITLE_PHRASES and not is_boilerplate_title(text):
+                candidates.append((0, len(text), text, link))
 
-    for a in anchors:
-        text = clean_text(a.get_text())
-        if not text:
-            img = a.find("img")
-            if img:
-                text = clean_text(img.get("alt") or img.get("title"))
-
-        if text and not is_boilerplate_title(text) and len(text) > len(best_text):
-            best_text = text
-            best_link = normalize_url(base_url, a.get("href"))
-
-    if best_text and best_link:
+    # Sort candidates by priority desc, then text length desc
+    if candidates:
+        candidates.sort(key=lambda c: (c[0], c[1]), reverse=True)
+        best_prio, best_len, best_text, best_link = candidates[0]
+        if not best_link:
+            first_link = card.find("a", href=True)
+            best_link = normalize_url(base_url, first_link.get("href")) if first_link else None
         return best_text, best_link
+
+    # Last resort: anchor with descriptive image alt text (>= 15 chars)
+    for a in card.find_all("a", href=True):
+        img = a.find("img")
+        if img:
+            alt = clean_text(img.get("alt") or img.get("title"))
+            if alt and len(alt) >= 15 and alt.lower() not in NON_TITLE_PHRASES and not is_boilerplate_title(alt):
+                link = normalize_url(base_url, a.get("href"))
+                return alt, link
 
     first_link = card.find("a", href=True)
     fallback_link = normalize_url(base_url, first_link.get("href")) if first_link else None
-    return best_text, fallback_link
+    return "", fallback_link
 
 
 def extract_product_id(card: Tag, url: str | None) -> str | None:
-    for attr in ("data-product-id", "data-pid", "data-sku", "data-id", "data-item-id"):
+    for attr in ("data-asin", "data-product-id", "data-pid", "data-sku", "data-id", "data-item-id"):
         val = card.get(attr)
         if val:
-            return str(val)
+            return str(val).strip()
 
     if url:
         match_id = re.search(r"[?&](?:pid|productId|id|sku)=([^&#]+)", url)
@@ -124,68 +189,136 @@ def extract_product_id(card: Tag, url: str | None) -> str | None:
 
 
 def extract_card_prices(card: Tag) -> tuple[float | None, float | None, str | None]:
-    strike_price: float | None = None
-    regular_prices: list[tuple[float, str | None]] = []
+    mrp: float | None = None
+    mrp_currency: str | None = None
 
-    for strike_elem in card.find_all(list(STRIKE_THROUGH_TAGS)):
-        text = strike_elem.get_text()
-        p, _ = extract_price_and_currency(text)
+    # 1. Check for MRP / Strikethrough price
+    mrp_elements = card.select(".a-price.a-text-price, .a-text-price, .a-text-strike, del, s, strike, [data-a-strike='true']")
+    for el in mrp_elements:
+        offscreen = el.select_one(".a-offscreen")
+        raw = offscreen.get_text() if offscreen else el.get_text()
+        p, c = extract_price_and_currency(raw)
         if p is not None:
-            strike_price = p
+            mrp = p
+            mrp_currency = c
             break
 
-    price_elements = card.find_all(
-        lambda t: t.name in ("span", "div", "p", "b", "strong")
-        and any(k in " ".join(t.get("class", [])) for k in ("price", "cost", "offer", "mrp", "regular", "amount", "rate"))
-    )
+    if mrp is None:
+        for span in card.find_all(["span", "div", "p"]):
+            text = clean_text(span.get_text())
+            if any(marker in text.lower() for marker in ("m.r.p", "mrp", "list price", "was:")):
+                p, c = extract_price_and_currency(text)
+                if p is not None:
+                    mrp = p
+                    mrp_currency = c
+                    break
 
-    if not price_elements:
-        price_elements = card.find_all(["span", "div", "p", "b", "strong"])
+    # 2. Check for Selling price
+    selling_price: float | None = None
+    selling_currency: str | None = None
 
-    for el in price_elements:
-        if el.name in STRIKE_THROUGH_TAGS or el.find_parent(list(STRIKE_THROUGH_TAGS)):
-            continue
-        text = el.get_text()
-        price, curr = extract_price_and_currency(text)
-        if price is not None:
-            regular_prices.append((price, curr))
+    selling_elements = card.select(".a-price:not(.a-text-price)")
+    for el in selling_elements:
+        offscreen = el.select_one(".a-offscreen")
+        if offscreen:
+            raw = offscreen.get_text()
+            p, c = extract_price_and_currency(raw)
+            if p is not None:
+                selling_price = p
+                selling_currency = c
+                break
 
-    if not regular_prices:
-        return None, strike_price, None
+        whole = el.select_one(".a-price-whole")
+        if whole:
+            w_text = whole.get_text().strip().rstrip(".,")
+            frac = el.select_one(".a-price-fraction")
+            f_text = frac.get_text().strip() if frac else ""
+            raw = f"₹{w_text}.{f_text}" if f_text else f"₹{w_text}"
+            p, c = extract_price_and_currency(raw)
+            if p is not None:
+                selling_price = p
+                selling_currency = c
+                break
 
-    currency = next((c for _, c in regular_prices if c is not None), None)
+    if selling_price is None:
+        candidates = card.find_all(
+            lambda t: t.name in ("span", "div", "p", "b", "strong")
+            and any(k in " ".join(t.get("class", [])) for k in ("price", "cost", "offer", "amount", "rate", "sale", "current"))
+        )
+        if not candidates:
+            candidates = card.find_all(["span", "div", "p", "b", "strong"])
 
-    if strike_price is not None:
-        selling_candidate = min(p for p, _ in regular_prices)
-        if selling_candidate < strike_price:
-            return selling_candidate, strike_price, currency
-        return selling_candidate, None, currency
+        regular_prices: list[tuple[float, str | None]] = []
+        for el in candidates:
+            if el.name in STRIKE_THROUGH_TAGS or el.find_parent(list(STRIKE_THROUGH_TAGS)) or "a-text-price" in el.get("class", []):
+                continue
+            text = el.get_text()
+            p, c = extract_price_and_currency(text)
+            if p is not None:
+                regular_prices.append((p, c))
 
-    if len(regular_prices) >= 2:
-        sorted_prices = sorted(p for p, _ in regular_prices)
-        if sorted_prices[0] < sorted_prices[-1]:
-            return sorted_prices[0], sorted_prices[-1], currency
-        return sorted_prices[0], None, currency
+        if regular_prices:
+            if mrp is not None:
+                valid_candidates = [p for p, _ in regular_prices if p <= mrp]
+                if valid_candidates:
+                    selling_price = max(valid_candidates)
+                    selling_currency = next((c for p, c in regular_prices if p == selling_price and c), None)
+            if selling_price is None:
+                selling_price = regular_prices[0][0]
+                selling_currency = regular_prices[0][1]
 
-    return regular_prices[0][0], None, currency
+    currency = selling_currency or mrp_currency
+    if selling_price is not None and mrp is not None and selling_price > mrp:
+        selling_price, mrp = mrp, selling_price
+
+    return selling_price, mrp, currency
 
 
 def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None]:
     rating: float | None = None
     reviews: int | None = None
 
-    for el in card.find_all(["span", "div", "p", "div"]):
-        classes = " ".join(el.get("class", []))
-        text = el.get_text()
-        if not rating and ("rating" in classes or "star" in classes or "★" in text):
-            rating = parse_rating(text)
-        if not reviews and ("review" in classes or "count" in classes or "(" in text):
-            reviews = parse_review_count(text)
+    # Rating
+    icon_alt = card.select_one("span.a-icon-alt, i.a-icon-star span, i.a-icon-star-small span")
+    if icon_alt:
+        rating = parse_rating(icon_alt.get_text())
 
-    if not rating:
-        rating = parse_rating(card.get_text())
-    if not reviews:
-        reviews = parse_review_count(card.get_text())
+    if rating is None:
+        rating_elem = card.select_one("[aria-label*='out of 5'], [aria-label*='stars'], [aria-label*='star']")
+        if rating_elem:
+            rating = parse_rating(str(rating_elem.get("aria-label")))
+
+    if rating is None:
+        for el in card.select("[class*='rating'], [class*='star']"):
+            text = clean_text(el.get_text())
+            if text:
+                r = parse_rating(text)
+                if r is not None:
+                    rating = r
+                    break
+
+    # Reviews
+    review_anchor = card.select_one("a[href*='#customerReviews'], a[href*='customerReviews']")
+    if review_anchor:
+        span_inside = review_anchor.select_one("span.s-underline-text, span.a-size-base, span")
+        text = span_inside.get_text() if span_inside else review_anchor.get_text()
+        reviews = parse_review_count(text)
+
+    if reviews is None:
+        for el in card.select("span.s-underline-text, [aria-label*='ratings'], [aria-label*='reviews']"):
+            label = el.get("aria-label")
+            text = str(label) if label else el.get_text()
+            rc = parse_review_count(text)
+            if rc is not None:
+                reviews = rc
+                break
+
+    if reviews is None:
+        for el in card.select("[class*='review'], [class*='reviews'], [class*='count']"):
+            rc = parse_review_count(el.get_text())
+            if rc is not None:
+                reviews = rc
+                break
 
     return rating, reviews
 
@@ -193,7 +326,39 @@ def extract_card_rating_and_reviews(card: Tag) -> tuple[float | None, int | None
 def extract_card_extra(card: Tag, page_type: str) -> dict[str, Any]:
     extra: dict[str, Any] = {}
 
-    if page_type == "generic_listing":
+    if page_type == "ecommerce":
+        # Badge
+        badge_el = card.select_one("span.a-badge-text, span.a-badge-label, [data-a-badge-color]")
+        if badge_el:
+            b_text = clean_text(badge_el.get_text())
+            if b_text and len(b_text) <= 50 and not is_boilerplate_title(b_text):
+                extra["badge"] = b_text
+
+        # Delivery
+        delivery_el = card.select_one("span[aria-label*='Delivery'], span[aria-label*='delivery']")
+        if delivery_el:
+            d_text = clean_text(str(delivery_el.get("aria-label")))
+            if d_text:
+                extra["delivery"] = d_text
+        if "delivery" not in extra:
+            for span in card.find_all("span"):
+                text = clean_text(span.get_text())
+                if re.search(r"\b(?:FREE Delivery|Get it by|Fastest delivery)\b", text, re.IGNORECASE):
+                    if len(text) <= 80:
+                        extra["delivery"] = text
+                        break
+
+        # Offers
+        for span in card.find_all("span"):
+            text = clean_text(span.get_text())
+            if re.fullmatch(r"\(?\s*\d+(?:\.\d+)?%\s*(?:off|discount)\s*\)?", text, re.IGNORECASE):
+                extra["offer"] = text
+                break
+            if re.search(r"\b(?:Save\s+(?:₹|\$|Rs\.?)\s*[0-9,]+)\b", text, re.IGNORECASE):
+                extra["offer"] = text
+                break
+
+    elif page_type == "generic_listing":
         for el in card.find_all(["span", "div", "p"]):
             classes = " ".join(el.get("class", []))
             text = clean_text(el.get_text())
@@ -255,6 +420,16 @@ def find_candidate_clusters(soup: BeautifulSoup) -> list[list[Tag]]:
         for group in groups.values():
             if len(group) >= 2:
                 clusters.append(group)
+
+    # Also detect repeated product cards sharing common search-result markers
+    for sel in (
+        "div[data-component-type='s-search-result']",
+        "div[data-asin]:not([data-asin=''])",
+        "div.s-result-item",
+    ):
+        items = soup.select(sel)
+        if len(items) >= 2:
+            clusters.append(items)
 
     return clusters
 

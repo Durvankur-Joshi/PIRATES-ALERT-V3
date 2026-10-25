@@ -39,6 +39,26 @@ def extract_field_value(card: Tag, rule: FieldExtractionRule | None, base_url: s
             return None
 
     if rule.attribute == "text":
+        # Handle Amazon / split price elements: prefer .a-offscreen text
+        if "a-price" in target_element.get("class", []):
+            offscreen = target_element.select_one(".a-offscreen")
+            if offscreen:
+                return clean_text(offscreen.get_text())
+
+        # Handle rating elements: prefer .a-icon-alt
+        icon_alt = target_element.select_one(".a-icon-alt")
+        if icon_alt:
+            return clean_text(icon_alt.get_text())
+
+        # Handle noise badges in title headings
+        if any(cls in target_element.get("class", []) for cls in ("s-result-item", "a-size-mini", "s-line-clamp-2", "s-title-instructions-style")) or target_element.name in ("h1", "h2", "h3"):
+            clone = BeautifulSoup(str(target_element), "html.parser").find()
+            if isinstance(clone, Tag):
+                for noise_cls in ("puis-sponsored-label-text", "a-badge-label", "s-label-popover-hover", "s-sponsored-label-info-icon"):
+                    for noise in clone.find_all(True, class_=noise_cls):
+                        noise.decompose()
+                return clean_text(clone.get_text())
+
         return clean_text(target_element.get_text())
 
     val = target_element.get(rule.attribute)

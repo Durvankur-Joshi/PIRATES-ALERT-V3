@@ -44,8 +44,36 @@ class BotChallengeDetectedError(NavigationError):
     pass
 
 
+class AccessRestrictedError(NavigationError):
+    pass
+
+
 class EmptyPageError(NavigationError):
     pass
+
+
+ACCESS_RESTRICTED_URL_SUBSTRINGS = (
+    "/authwall",
+    "/login",
+    "/checkpoint/",
+    "/uas/login",
+)
+
+ACCESS_RESTRICTED_TITLE_KEYWORDS = (
+    "sign in | linkedin",
+    "sign up | linkedin",
+    "join linkedin",
+    "log in | linkedin",
+    "security verification | linkedin",
+)
+
+ACCESS_RESTRICTED_BODY_SNIPPETS = (
+    "authwall",
+    "authwall-join-form",
+    "join linkedin to view",
+    "sign in to view",
+    "sign in to see who you already know",
+)
 
 
 def check_bot_challenges(title: str, content: str) -> None:
@@ -58,6 +86,29 @@ def check_bot_challenges(title: str, content: str) -> None:
     for snippet in BOT_CHALLENGE_BODY_SNIPPETS:
         if snippet in content_lower:
             raise BotChallengeDetectedError("Bot protection challenge element detected in page")
+
+
+def check_access_restrictions(final_url: str, title: str, content: str) -> None:
+    url_lower = final_url.lower()
+    for sub in ACCESS_RESTRICTED_URL_SUBSTRINGS:
+        if sub in url_lower:
+            raise AccessRestrictedError(
+                f"Page is access-restricted or login-gated: redirected to authentication checkpoint '{sub}'"
+            )
+
+    title_lower = title.lower()
+    for kw in ACCESS_RESTRICTED_TITLE_KEYWORDS:
+        if kw in title_lower:
+            raise AccessRestrictedError(
+                f"Page is access-restricted or login-gated: title '{title}' indicates authentication requirement"
+            )
+
+    content_snippet = content[:5000].lower()
+    for snip in ACCESS_RESTRICTED_BODY_SNIPPETS:
+        if snip in content_snippet:
+            raise AccessRestrictedError(
+                f"Page is access-restricted or login-gated: authentication wall element detected ('{snip}')"
+            )
 
 
 async def attempt_dismiss_consent(page: Page) -> None:
@@ -142,6 +193,7 @@ async def load_rendered_page(
             raise EmptyPageError(f"Page at {final_url} returned empty or insufficient content")
 
         check_bot_challenges(page_title, rendered_html)
+        check_access_restrictions(final_url, page_title, rendered_html)
 
         return rendered_html, final_url
 
